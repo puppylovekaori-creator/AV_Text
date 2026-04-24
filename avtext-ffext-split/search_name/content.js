@@ -1,0 +1,254 @@
+// content_script.js
+
+"use strict";
+
+const MAX_LEN = 12;          // ユーザー要望：とりあえず12文字
+const DEBOUNCE_MS = 120;     // 体感即時寄り
+const OVERLAY_Z = 2147483647;
+
+let overlay = null;
+let overlayText = null;
+let overlayBtn = null;
+
+let lastSentText = "";
+let lastSelectionKey = "";
+let debounceTimer = null;
+
+// 表示中の対象名（クリック登録の誤爆防止）
+let currentName = "";
+
+// 直近 req_id（古い返事で上書きしないため）
+let lastReqIdCheck = 0;
+let lastReqIdRegister = 0;
+
+function makeOverlay() {
+  if (overlay) return;
+
+  overlay = document.createElement("div");
+  overlay.style.position = "fixed";
+  overlay.style.zIndex = String(OVERLAY_Z);
+  overlay.style.fontSize = "14px";
+  overlay.style.lineHeight = "1.2";
+  overlay.style.padding = "6px 8px";
+  overlay.style.borderRadius = "8px";
+  overlay.style.boxShadow = "0 2px 10px rgba(0,0,0,0.25)";
+  overlay.style.background = "rgba(20,20,20,0.92)";
+  overlay.style.color = "#fff";
+  overlay.style.userSelect = "none";
+  overlay.style.pointerEvents = "auto";
+  overlay.style.display = "none";
+
+  overlayText = document.createElement("span");
+  overlay.appendChild(overlayText);
+
+  overlayBtn = document.createElement("button");
+  overlayBtn.textContent = "登録";
+  overlayBtn.style.marginLeft = "10px";
+  overlayBtn.style.padding = "2px 8px";
+  overlayBtn.style.borderRadius = "999px";
+  overlayBtn.style.border = "0";
+  overlayBtn.style.cursor = "pointer";
+  overlayBtn.style.fontSize = "13px";
+  overlayBtn.style.lineHeight = "1.2";
+  overlayBtn.style.background = "rgba(255,255,255,0.9)";
+  overlayBtn.style.color = "#111";
+  overlayBtn.style.display = "none";
+
+  // クリックで selection が崩れてオーバーレイが消えるのを防ぐ
+  overlayBtn.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+
+  overlayBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!currentName) return;
+    showLoading(`登録中: ${currentName}`);
+    browser.runtime.sendMessage({ type: "register_actress", text: currentName }).catch(() => {});
+  }, true);
+
+  overlay.appendChild(overlayBtn);
+
+  document.documentElement.appendChild(overlay);
+}
+
+function hideOverlay() {
+  if (!overlay) return;
+  overlay.style.display = "none";
+  overlayBtn.style.display = "none";
+  currentName = "";
+}
+
+function showOverlayAt(rect) {
+  makeOverlay();
+
+  const margin = 10;
+  let x = rect.left;
+  let y = rect.bottom + margin;
+
+  // 画面外に出ないように軽く補正
+  const maxX = window.innerWidth - 10;
+  const maxY = window.innerHeight - 10;
+
+  overlay.style.display = "block";
+  overlay.style.left = "0px";
+  overlay.style.top = "0px";
+  overlay.style.transform = "translate(-9999px, -9999px)"; // 一旦退避
+
+  const w = overlay.offsetWidth;
+  const h = overlay.offsetHeight;
+
+  if (x + w > maxX) x = Math.max(10, maxX - w);
+  if (y + h > maxY) y = Math.max(10, rect.top - margin - h);
+
+  overlay.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+}
+
+function setOverlayText(text) {
+  makeOverlay();
+  overlayText.textContent = text;
+}
+
+function showLoading(label) {
+  setOverlayText(label || "判定中...");
+  overlayBtn.style.display = "none";
+}
+
+function showRegistered(name) {
+  setOverlayText(`登録済: ${name}`);
+  overlayBtn.style.display = "none";
+}
+
+function showUnregistered(name) {
+  setOverlayText(`未登録: ${name}`);
+  overlayBtn.style.display = "inline-block";
+}
+
+function getSelectionRect() {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  const rect = range.getBoundingClientRect();
+  if (rect && rect.width === 0 && rect.height === 0) {
+    // 文字列だけ選択だとゼロになるケースがあるので、clientRects を使う
+    const rects = range.getClientRects();
+    if (rects && rects.length > 0) return rects[0];
+  }
+  return rect;
+}
+
+function cleanSelectedText(raw) {
+  if (!raw) return "";
+
+  // 前後空白（半角/全角）除去
+  let s = raw.replace(/^[\s\u3000]+|[\s\u3000]+$/g, "");
+
+  // 末尾や先頭の「、」「。」など、明らかに名前に使わない記号を落とす
+  // （中の「・」「＝」「-」等は残す）
+  s = s.replace(/^[、，。．・]+/, "");
+  s = s.replace(/[、，。．・]+$/, "");
+
+  // 改行やタブが混じっていたら「複数語扱い」で捨てる（IN対応不要）
+  if (/[ \t\r\n\u3000]/.test(s)) return "";
+
+  if (s.length === 0) return "";
+  if (s.length > MAX_LEN) return "";
+
+  return s;
+}
+
+function scheduleCheck() {
+  if (debounceTimer) clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(runCheckNow, DEBOUNCE_MS);
+}
+
+function runCheckNow() {
+  debounceTimer = null;
+
+  const sel = window.getSelection();
+  const raw = sel ? String(sel.toString() || "") : "";
+  const cleaned = cleanSelectedText(raw);
+
+  if (!cleaned) {
+    hideOverlay();
+    lastSentText = "";
+    lastSelectionKey = "";
+    return;
+  }
+
+  const rect = getSelectionRect();
+  if (!rect) return;
+
+  showOverlayAt(rect);
+
+  // 同じ選択に対して連打しない
+  const key = `${cleaned}|${Math.round(rect.left)}|${Math.round(rect.top)}|${Math.round(rect.width)}|${Math.round(rect.height)}`;
+  if (key === lastSelectionKey) return;
+
+  lastSelectionKey = key;
+  currentName = cleaned;
+  showLoading("判定中...");
+
+  lastSentText = cleaned;
+  browser.runtime.sendMessage({ type: "check_actress", text: cleaned }).catch(() => {});
+}
+
+document.addEventListener("selectionchange", () => {
+  scheduleCheck();
+}, true);
+
+document.addEventListener("scroll", () => {
+  // スクロールで選択位置が変わるので、表示中なら追従更新
+  if (!overlay || overlay.style.display === "none") return;
+  scheduleCheck();
+}, true);
+
+browser.runtime.onMessage.addListener((message) => {
+  if (!message || message.type !== "native_result") return;
+
+  const kind = message.kind;
+  const payload = message.payload || {};
+
+  if (kind === "check_actress") {
+    // 古い返事で上書きしない（background 側で req_id は振っているが content 側は見えない）
+    // なので currentName と一致しない返事は捨てる
+    if (!currentName) return;
+
+    if (payload.status !== "ok") {
+      setOverlayText(`判定失敗: ${currentName}`);
+      overlayBtn.style.display = "none";
+      return;
+    }
+
+    const found = !!payload.found;
+    if (found) showRegistered(currentName);
+    else showUnregistered(currentName);
+    return;
+  }
+
+  if (kind === "register_actress") {
+    if (!currentName) return;
+
+    if (payload.status !== "ok") {
+      setOverlayText(`登録失敗: ${currentName}`);
+      overlayBtn.style.display = "none";
+      return;
+    }
+
+    // registered=true なら即表示更新
+    if (payload.registered === true) {
+      showRegistered(currentName);
+      return;
+    }
+
+    // 既に存在していた等
+    if (payload.already_exists === true) {
+      showRegistered(currentName);
+      return;
+    }
+
+    // 想定外：一旦「未登録」に戻す
+    showUnregistered(currentName);
+  }
+});

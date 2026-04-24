@@ -1,0 +1,373 @@
+# -*- coding: utf-8 -*-
+"""
+Firefox Native Messaging host for AV text support.
+
+target:
+  - "title"        : title.txt の 1 行目を上書き（2行目以降は維持）
+  - "actress"      : actress.txt を全置換
+  - "no"           : no.txt を全置換
+  - "focus_sakura" : サクラエディタを最前面＆フォーカス
+  - "check_actress": DBに OLD/NEW が存在するか判定（found: true/false）
+
+保存先:
+  %APPDATA%\\sakura\\avtext\\title.txt / actress.txt / no.txt
+  %APPDATA%\\sakura\\avtext\\setting.ini からDB接続情報を取得
+
+ログ:
+  （この .py のあるフォルダ）\\avtext_helper.log
+"""
+
+import sys
+import os
+import json
+import struct
+import subprocess
+import time
+from pathlib import Path
+from datetime import datetime
+import ctypes
+from ctypes import wintypes
+import configparser
+
+# ---------- パス（重要：固定パス禁止。配置フォルダ基準） ----------
+HOST_DIR = Path(__file__).resolve().parent
+LOG_PATH = HOST_DIR / "avtext_helper.log"
+
+OUT_DIR = Path(os.environ.get("APPDATA", "")) / "sakura" / "avtext"
+TITLE_PATH = OUT_DIR / "title.txt"
+ACTRESS_PATH = OUT_DIR / "actress.txt"
+NO_PATH = OUT_DIR / "no.txt"
+SETTING_INI_PATH = OUT_DIR / "setting.ini"
+
+# 管理者サクラ向けの「title黙って再読込」タスク名（あなたが作ったやつ）
+RELOAD_TASK_NAME = "AvText_ReloadTitle_Admin"
+
+# DB（SQL Server想定）
+try:
+    import pyodbc  # type: ignore
+except Exception:
+    pyodbc = None
+
+_DB_CONN = None  # lazy connection cache
+
+
+def debug_log(msg: str) -> None:
+    try:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        HOST_DIR.mkdir(parents=True, exist_ok=True)
+        with LOG_PATH.open("a", encoding="utf-8", newline="\n") as f:
+            f.write(f"{ts} {msg}\n")
+    except Exception:
+        pass
+
+
+def _read_exact(n: int) -> bytes:
+    buf = b""
+    while len(buf) < n:
+        chunk = sys.stdin.buffer.read(n - len(buf))
+        if not chunk:
+            return b""
+        buf += chunk
+    return buf
+
+
+def read_message():
+    raw_len = _read_exact(4)
+    if not raw_len:
+        return None
+    msg_len = struct.unpack("<I", raw_len)[0]
+    if msg_len <= 0:
+        return {}
+    raw = _read_exact(msg_len)
+    if not raw:
+        return None
+    return json.loads(raw.decode("utf-8"))
+
+
+def send_message(obj) -> None:
+    raw = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+    sys.stdout.buffer.write(struct.pack("<I", len(raw)))
+    sys.stdout.buffer.write(raw)
+    sys.stdout.buffer.flush()
+
+
+def write_text_full(path: Path, text: str) -> None:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as f:
+        f.write(text if text is not None else "")
+        f.write("\n")
+
+
+def write_first_line(path: Path, text: str) -> None:
+    """
+    1行目だけ差し替え（2行目以降維持）。
+    ※内容が変わらない場合は無駄に上書きしない（mtime更新を避け、監視通知の頻度を減らす）
+    """
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    lines = []
+    if path.exists():
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except UnicodeDecodeError:
+            lines = path.read_text(encoding="utf-8-sig").splitlines()
+
+    if lines:
+        if lines[0] == text:
+            return
+        lines[0] = text
+    else:
+        lines = [text]
+
+    with path.open("w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines))
+        f.write("\n")
+
+
+def trigger_reload_title_admin_task() -> None:
+    try:
+        r = subprocess.run(
+            ["schtasks", "/run", "/tn", RELOAD_TASK_NAME],
+            capture_output=True,
+            text=True,
+            check=False,
+            creationflags=0x08000000,  # CREATE_NO_WINDOW
+        )
+        if r.returncode != 0:
+            debug_log(f"[WARN] schtasks run failed rc={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}")
+        else:
+            debug_log("[INFO] schtasks run OK")
+        time.sleep(0.25)
+    except Exception as e:
+        debug_log(f"[WARN] trigger_reload_title_admin_task failed: {e!r}")
+
+
+def focus_sakura_window() -> str:
+    # trigger_reload_title_admin_task()
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    candidates = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def enum_proc(hwnd, lParam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return True
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        title = buf.value or ""
+        t_low = title.lower()
+        if ("sakura" in t_low) or ("サクラ" in title):
+            candidates.append((hwnd, title))
+        return True
+
+    user32.EnumWindows(enum_proc, 0)
+
+    if not candidates:
+        return "NG(no_window)"
+
+    hwnd, title = candidates[0]
+
+    SW_RESTORE = 9
+    user32.ShowWindow(hwnd, SW_RESTORE)
+
+    try:
+        fg = user32.GetForegroundWindow()
+        cur_tid = kernel32.GetCurrentThreadId()
+        fg_tid = user32.GetWindowThreadProcessId(fg, None) if fg else 0
+        target_tid = user32.GetWindowThreadProcessId(hwnd, None)
+
+        if fg_tid:
+            user32.AttachThreadInput(cur_tid, fg_tid, True)
+        user32.AttachThreadInput(cur_tid, target_tid, True)
+
+        user32.SetForegroundWindow(hwnd)
+        user32.BringWindowToTop(hwnd)
+        user32.SetFocus(hwnd)
+
+    finally:
+        try:
+            if fg_tid:
+                user32.AttachThreadInput(cur_tid, fg_tid, False)
+            user32.AttachThreadInput(cur_tid, target_tid, False)
+        except Exception:
+            pass
+
+    return f"OK({title})"
+
+
+def _strip_quotes(v: str) -> str:
+    if v is None:
+        return ""
+    s = str(v).strip()
+    if len(s) >= 2 and ((s[0] == '"' and s[-1] == '"') or (s[0] == "'" and s[-1] == "'")):
+        s = s[1:-1].strip()
+    return s
+
+
+def _load_db_settings_from_ini() -> dict:
+    """
+    %APPDATA%\\sakura\\avtext\\setting.ini の [DB Setting] を読む
+    期待キー: IP, User, Password, Database
+    """
+    if not SETTING_INI_PATH.exists():
+        raise RuntimeError(f"setting.ini not found: {SETTING_INI_PATH}")
+
+    cp = configparser.ConfigParser()
+    cp.read(SETTING_INI_PATH, encoding="utf-8")
+
+    section = "DB Setting"
+    if section not in cp:
+        raise RuntimeError(f"[{section}] not found in setting.ini")
+
+    ip = _strip_quotes(cp[section].get("IP", ""))
+    user = _strip_quotes(cp[section].get("User", ""))
+    password = _strip_quotes(cp[section].get("Password", ""))
+    database = _strip_quotes(cp[section].get("Database", ""))
+
+    if not ip or not user or not password or not database:
+        raise RuntimeError("DB settings are incomplete in setting.ini (need IP/User/Password/Database)")
+
+    return {
+        "ip": ip,
+        "user": user,
+        "password": password,
+        "database": database,
+    }
+
+
+def _build_connection_string_from_ini() -> tuple[str, str, str]:
+    """
+    返り値: (connection_string, ip, database)
+    """
+    s = _load_db_settings_from_ini()
+
+    ip = s["ip"]
+    db = s["database"]
+
+    # IPにポートが書いてある場合にも寄せる（例: 192.168.0.22,1433 など）
+    if "," in ip or ":" in ip or "\\" in ip:
+        server = ip
+        # tcp: が無ければ付ける（named instance の場合は付けない）
+        if not server.lower().startswith("tcp:") and ("\\" not in server):
+            server = "tcp:" + server
+    else:
+        server = f"tcp:{ip},1433"
+
+    # ODBC Driver 18 は既定 Encrypt=Yes なのでLAN用途前提で Encrypt=No を明示
+    cs = (
+        "Driver={ODBC Driver 18 for SQL Server};"
+        f"Server={server};"
+        f"Database={db};"
+        f"UID={s['user']};"
+        f"PWD={s['password']};"
+        "Encrypt=No;"
+        "TrustServerCertificate=Yes;"
+        "Connection Timeout=2;"
+    )
+    return cs, ip, db
+
+
+def _get_db_conn():
+    global _DB_CONN
+    if pyodbc is None:
+        raise RuntimeError("pyodbc is not installed")
+
+    if _DB_CONN is not None:
+        return _DB_CONN
+
+    cs, ip, db = _build_connection_string_from_ini()
+
+    # パスワードは絶対にログに出さない
+    debug_log(f"[INFO] DB settings from ini: ip={ip} db={db}")
+    debug_log("[INFO] DB connect start")
+
+    conn = pyodbc.connect(cs, timeout=2)
+    conn.autocommit = True
+    _DB_CONN = conn
+    debug_log("[INFO] DB connect OK")
+    return _DB_CONN
+
+
+def check_actress_exists(name: str) -> bool:
+    """
+    dbo.ACTRESS_DATA の OLD_NAME/NEW_NAME のどちらかに完全一致するか。
+    """
+    if not name:
+        return False
+
+    conn = _get_db_conn()
+    sql = """
+SELECT TOP 1 1
+FROM [dbo].[ACTRESS_DATA]
+WHERE OLD_NAME = ? OR NEW_NAME = ?
+"""
+    cur = conn.cursor()
+    row = cur.execute(sql, (name, name)).fetchone()
+    return bool(row)
+
+
+def handle_message(msg: dict) -> dict:
+    target = msg.get("target")
+    text = msg.get("text", "")
+    req_id = msg.get("req_id")
+
+    if target == "title":
+        write_first_line(TITLE_PATH, text)
+        return {"status": "ok", "target": target}
+
+    if target == "actress":
+        write_text_full(ACTRESS_PATH, text)
+        return {"status": "ok", "target": target}
+
+    if target == "no":
+        write_text_full(NO_PATH, text)
+        return {"status": "ok", "target": target}
+
+    if target == "focus_sakura":
+        res = focus_sakura_window()
+        return {"status": "ok", "target": target, "result": res}
+
+    if target == "check_actress":
+        try:
+            found = check_actress_exists(text)
+            return {"status": "ok", "target": target, "req_id": req_id, "found": found}
+        except Exception as e:
+            debug_log(f"[WARN] check_actress failed: {e!r}")
+            return {"status": "error", "target": target, "req_id": req_id, "error": str(e)}
+
+    return {"status": "error", "error": f"unknown target: {target!r}"}
+
+
+def main() -> int:
+    debug_log("=== avtext_helper start: ===")
+
+    while True:
+        try:
+            msg = read_message()
+            if msg is None:
+                debug_log("read_message: EOF")
+                break
+
+            debug_log(f"read_message: {msg!r}")
+            resp = handle_message(msg)
+            debug_log(f"send_message: {resp!r}")
+            send_message(resp)
+
+        except Exception as e:
+            debug_log(f"ERROR: {e!r}")
+            try:
+                send_message({"status": "error", "error": str(e)})
+            except Exception:
+                pass
+
+    debug_log("=== avtext_helper end ===")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

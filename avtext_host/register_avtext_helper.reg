@@ -1,0 +1,6 @@
+Windows Registry Editor Version 5.00
+
+[-HKEY_CURRENT_USER\Software\Mozilla\NativeMessagingHosts\avtext_helper]
+
+[HKEY_CURRENT_USER\Software\Mozilla\NativeMessagingHosts\avtext_helper]
+@="C:\\dev\\avtext_host\\avtext_helper.json"

@@ -1,0 +1,14 @@
+{
+  "name"               : "avtext_helper",
+  "description"        : "AV Text native host",
+  "path"               : "C:\\dev\\avtext_host\\avtext_helper.bat",
+  "type"               : "stdio",
+  "allowed_extensions" : [
+    "av-text-paster@example.com",
+    "av-text-title@example.com",
+    "av-text-actress@example.com",
+    "av-text-no@example.com",
+    "av-text-focus@example.com",
+    "av-text-check@example.com"
+  ]
+}

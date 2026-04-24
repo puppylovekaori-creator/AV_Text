@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Firefox Addon Test Fixture</title>
+  <style>
+    :root {
+      --bg: #f7f7f7;
+      --card: #ffffff;
+      --border: #cccccc;
+      --text: #222222;
+      --muted: #666666;
+      --accent: #2d6cdf;
+      --danger: #b00020;
+      --ok: #0a7a2f;
+    }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    h1, h2 {
+      margin-top: 0;
+    }
+
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .desc {
+      margin-bottom: 20px;
+      color: var(--muted);
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+
+    button {
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      background: #fff;
+      cursor: pointer;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+
+    button:hover {
+      border-color: var(--accent);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+
+    .status {
+      font-size: 13px;
+      margin-bottom: 12px;
+    }
+
+    .on {
+      color: var(--danger);
+      font-weight: bold;
+    }
+
+    .off {
+      color: var(--ok);
+      font-weight: bold;
+    }
+
+    .area {
+      min-height: 160px;
+      border: 1px dashed #999;
+      border-radius: 10px;
+      padding: 12px;
+      background: #fcfcfc;
+    }
+
+    .noselect {
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .drag-items {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .drag-item {
+      width: 90px;
+      height: 90px;
+      border-radius: 10px;
+      background: #dde7ff;
+      border: 1px solid #8aa7ee;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: grab;
+      font-weight: bold;
+    }
+
+    .dropzone {
+      margin-top: 12px;
+      min-height: 90px;
+      border: 2px dashed #bbb;
+      border-radius: 10px;
+      padding: 10px;
+      background: #fafafa;
+    }
+
+    .mixed {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      background: transparent;
+      display: none;
+      z-index: 10;
+    }
+
+    .log {
+      margin-top: 20px;
+      background: #111;
+      color: #e8e8e8;
+      border-radius: 12px;
+      padding: 12px;
+      height: 220px;
+      overflow: auto;
+      font-family: Consolas, monospace;
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 8px;
+    }
+
+    code {
+      background: #f0f0f0;
+      padding: 1px 5px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Firefox Addon テスト用ローカルHTML</h1>
+    <div class="desc">
+      右クリック禁止 / ドラッグ禁止 / 選択禁止 をローカルで再現するための固定ページ。
+      addon 側で解除できるかを確認しやすいように、各機能を個別ON/OFFできる。
+    </div>
+
+    <div class="toolbar">
+      <button id="toggleContextMenu">右クリック禁止 ON/OFF</button>
+      <button id="toggleDrag">ドラッグ禁止 ON/OFF</button>
+      <button id="toggleSelect">選択禁止 ON/OFF</button>
+      <button id="toggleAll">全部まとめて切替</button>
+      <button id="clearLog">ログ消去</button>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <h2>1. 右クリック禁止エリア</h2>
+        <div class="status">状態: <span id="statusContext" class="on">禁止中</span></div>
+        <div id="contextArea" class="area">
+          このエリアでは <code>contextmenu</code> を潰している。<br>
+          通常は右クリックメニューが出ない想定。<br><br>
+          選択やドラッグはこのエリアでは主目的ではない。<br>
+          addon で右クリックだけ戻せるかを確認する用。
+        </div>
+        <div class="hint">確認: 右クリックして標準メニューが出るか。</div>
+      </section>
+
+      <section class="card">
+        <h2>2. ドラッグ禁止エリア</h2>
+        <div class="status">状態: <span id="statusDrag" class="on">禁止中</span></div>
+        <div id="dragArea" class="area">
+          下の青い箱は本来ドラッグできる要素。<br>
+          ただし今は <code>dragstart</code> を止めている。<br>
+
+          <div class="drag-items">
+            <div class="drag-item" draggable="true">A</div>
+            <div class="drag-item" draggable="true">B</div>
+            <div class="drag-item" draggable="true">C</div>
+          </div>
+
+          <div id="dropzone" class="dropzone">
+            ここにドラッグして入れば成功
+          </div>
+        </div>
+        <div class="hint">確認: A/B/C を下の枠へドラッグできるか。</div>
+      </section>
+
+      <section class="card">
+        <h2>3. 選択禁止エリア</h2>
+        <div class="status">状態: <span id="statusSelect" class="on">禁止中</span></div>
+        <div id="selectArea" class="area noselect">
+          この文章は <code>user-select: none</code> で選択禁止。<br>
+          addon で CSS 上書きできるなら、文字選択できるようになるはず。<br><br>
+          日本語の文章を少し長めに置いておく。<br>
+          この行も、その下の行も、ドラッグしても選択できない状態を想定している。<br>
+          コピー系 addon の確認用。
+        </div>
+        <div class="hint">確認: マウスで文字列を選択できるか。</div>
+      </section>
+
+      <section class="card">
+        <h2>4. 全部盛りエリア</h2>
+        <div class="status">
+          状態:
+          右クリック <span id="statusMixedContext" class="on">禁止中</span> /
+          ドラッグ <span id="statusMixedDrag" class="on">禁止中</span> /
+          選択 <span id="statusMixedSelect" class="on">禁止中</span>
+        </div>
+        <div id="mixedArea" class="area mixed noselect">
+          ここは全部まとめて妨害する場所。<br>
+          実サイトに近い「複合妨害」の確認用。<br><br>
+
+          文章:
+          この行は選択禁止。
+          右クリックも禁止。
+          さらに画像ドラッグも禁止。<br><br>
+
+          画像:
+          <img id="testImg"
+               src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='320' height='120'><rect width='100%' height='100%' fill='%23dfe8ff'/><text x='20' y='70' font-size='28' fill='%23333'>DRAG TEST IMAGE</text></svg>"
+               alt="drag test"
+               draggable="true" />
+
+          <div id="mixedOverlay" class="overlay"></div>
+        </div>
+        <div class="hint">確認: 右クリック / 文字選択 / 画像ドラッグ の複合テスト。</div>
+      </section>
+    </div>
+
+    <div id="log" class="log"></div>
+  </div>
+
+  <script>
+    const state = {
+      contextBlocked: true,
+      dragBlocked: true,
+      selectBlocked: true
+    };
+
+    const logEl = document.getElementById("log");
+
+    function log(message) {
+      const now = new Date();
+      const time = now.toLocaleTimeString();
+      logEl.textContent += `[${time}] ${message}\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function setStatus(id, blocked) {
+      const el = document.getElementById(id);
+      el.textContent = blocked ? "禁止中" : "解除中";
+      el.className = blocked ? "on" : "off";
+    }
+
+    function render() {
+      setStatus("statusContext", state.contextBlocked);
+      setStatus("statusDrag", state.dragBlocked);
+      setStatus("statusSelect", state.selectBlocked);
+
+      setStatus("statusMixedContext", state.contextBlocked);
+      setStatus("statusMixedDrag", state.dragBlocked);
+      setStatus("statusMixedSelect", state.selectBlocked);
+
+      const selectArea = document.getElementById("selectArea");
+      const mixedArea = document.getElementById("mixedArea");
+
+      if (state.selectBlocked) {
+        selectArea.classList.add("noselect");
+        mixedArea.classList.add("noselect");
+      } else {
+        selectArea.classList.remove("noselect");
+        mixedArea.classList.remove("noselect");
+      }
+    }
+
+    // 右クリック禁止
+    document.getElementById("contextArea").addEventListener("contextmenu", (e) => {
+      log("contextArea: contextmenu");
+      if (state.contextBlocked) {
+        e.preventDefault();
+        log("contextArea: 右クリック禁止が発動");
+      }
+    });
+
+    document.getElementById("mixedArea").addEventListener("contextmenu", (e) => {
+      log("mixedArea: contextmenu");
+      if (state.contextBlocked) {
+        e.preventDefault();
+        log("mixedArea: 右クリック禁止が発動");
+      }
+    });
+
+    // ドラッグ禁止
+    document.querySelectorAll(".drag-item").forEach((item) => {
+      item.addEventListener("dragstart", (e) => {
+        log(`drag-item ${item.textContent}: dragstart`);
+        if (state.dragBlocked) {
+          e.preventDefault();
+          log(`drag-item ${item.textContent}: ドラッグ禁止が発動`);
+          return;
+        }
+        e.dataTransfer.setData("text/plain", item.textContent);
+      });
+    });
+
+    document.getElementById("testImg").addEventListener("dragstart", (e) => {
+      log("mixed image: dragstart");
+      if (state.dragBlocked) {
+        e.preventDefault();
+        log("mixed image: ドラッグ禁止が発動");
+      }
+    });
+
+    const dropzone = document.getElementById("dropzone");
+    dropzone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+    });
+
+    dropzone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const data = e.dataTransfer.getData("text/plain");
+      dropzone.textContent = `ドロップ成功: ${data}`;
+      log(`dropzone: drop success (${data})`);
+    });
+
+    // コピーや選択の確認ログ
+    document.getElementById("selectArea").addEventListener("copy", () => {
+      log("selectArea: copy");
+    });
+
+    document.getElementById("mixedArea").addEventListener("copy", () => {
+      log("mixedArea: copy");
+    });
+
+    document.addEventListener("selectionchange", () => {
+      const selected = window.getSelection().toString();
+      if (selected) {
+        log(`selectionchange: "${selected.slice(0, 40)}"`);
+      }
+    });
+
+    // ボタン
+    document.getElementById("toggleContextMenu").addEventListener("click", () => {
+      state.contextBlocked = !state.contextBlocked;
+      render();
+      log(`右クリック禁止: ${state.contextBlocked ? "ON" : "OFF"}`);
+    });
+
+    document.getElementById("toggleDrag").addEventListener("click", () => {
+      state.dragBlocked = !state.dragBlocked;
+      render();
+      log(`ドラッグ禁止: ${state.dragBlocked ? "ON" : "OFF"}`);
+    });
+
+    document.getElementById("toggleSelect").addEventListener("click", () => {
+      state.selectBlocked = !state.selectBlocked;
+      render();
+      log(`選択禁止: ${state.selectBlocked ? "ON" : "OFF"}`);
+    });
+
+    document.getElementById("toggleAll").addEventListener("click", () => {
+      const next = !(state.contextBlocked && state.dragBlocked && state.selectBlocked);
+      state.contextBlocked = next;
+      state.dragBlocked = next;
+      state.selectBlocked = next;
+      render();
+      log(`全部まとめて: ${next ? "禁止ON" : "禁止OFF"}`);
+    });
+
+    document.getElementById("clearLog").addEventListener("click", () => {
+      logEl.textContent = "";
+    });
+
+    render();
+    log("ページ初期化完了");
+    log("初期状態: 右クリック禁止 / ドラッグ禁止 / 選択禁止 = ON");
+  </script>
+</body>
+</html>

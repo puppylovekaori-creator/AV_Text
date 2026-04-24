@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "FX Unblock Controls",
+  "version": "0.1.0",
+  "description": "Unblocks context menu, drag, and text selection on pages where they are suppressed.",
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "fx-unblock-controls@dev.local",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
+  }
+}
