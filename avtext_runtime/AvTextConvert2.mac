@@ -1,0 +1,9 @@
+// カーソル行をコピーして、変換元 conv.txt にフォーカスを戻す
+// 行頭に移動
+GoFileTop(0);
+// (選択)行末に移動(折り返し単位)
+GoLineEnd_Sel(0);
+// コピー
+Copy(0);
+// 変換元 conv.txt をアクティブにする
+FileOpen("C:/Users/ジョージ・ブッシュ/AppData/Roaming/sakura/avtext/title.txt");

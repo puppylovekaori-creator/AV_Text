@@ -1,0 +1,32 @@
+1) Native host（Python/bat/json/ログ）※C:\dev 統一後
+C:\dev\avtext_host\
+  avtext_helper.json          （path は C:\dev\avtext_host\avtext_helper.bat）
+  avtext_helper.bat           （%~dp0 基準で avtext_helper.py 起動）
+  avtext_helper.py            （ログは同フォルダ avtext_helper.log に出す版）
+  avtext_helper.log
+  register_avtext_helper.reg  （レジストリ登録用）
+  manifest.json               （※置いてあった。用途が混ざってた可能性あり）
+  file.txt / flie.txt         （※途中でできた空ファイル）
+2) 分割アドオン（右クリック直下に4項目出すための “1アドオン=1メニュー”）
+C:\dev\avtext-ffext-split\
+  title\
+    manifest.json
+    background.js
+  actress\
+    manifest.json
+    background.js
+  no\
+    manifest.json
+    background.js
+  focus\
+    manifest.json
+    background.js
+3) 旧・単体アドオン（最初に貼ってた “AVText ▶” のやつ）
+C:\dev\avtext-ffext\
+  manifest.json
+  background.js
+  （メモ用 txt が1個）
+4) 署名・配布物置き場（zip/xpi）
+C:\dev\avtext-ffext-signed\
+  *.zip
+  *.xpi

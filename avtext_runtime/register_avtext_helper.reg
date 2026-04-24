@@ -1,0 +1,4 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_CURRENT_USER\SOFTWARE\Mozilla\NativeMessagingHosts\avtext_helper]
+@="C:\\Users\\ジョージ・ブッシュ\\AppData\\Roaming\\sakura\\avtext\\avtext_helper.json"

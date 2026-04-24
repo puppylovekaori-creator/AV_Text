@@ -1,0 +1,15 @@
+別件でバグ
+ファイル名はちゃんと編集されているが、DBにフルネームで登録されていない
+ログにも苗字で止まっちゃってるな
+
+2025-12-28 22:41:00.029 [INFO] DB config loaded: server=192.168.0.22, database=FileDB
+2025-12-28 22:41:00.155 [INFO] DB connected with driver 'ODBC Driver 18 for SQL Server'.
+2025-12-28 22:41:00.156 [INFO] title loaded:  C:\Users\ジョージ・ブッシュ\AppData\Roaming\sakura\avtext\title.txt (encoding=utf-8)
+2025-12-28 22:41:00.158 [INFO] actress loaded: C:\Users\ジョージ・ブッシュ\AppData\Roaming\sakura\avtext\actress.txt (encoding=utf-8)
+2025-12-28 22:41:00.162 [INFO] 912 aliases loaded from DB.
+2025-12-28 22:41:00.338 [INFO] output written: C:\Users\ジョージ・ブッシュ\AppData\Roaming\sakura\avtext\conv_converted.txt
+2025-12-28 22:41:00.348 [INFO] 1 new names inserted into DB.
+2025-12-28 22:41:00.350 [INFO] registration_text_len=21
+2025-12-28 22:41:00.351 [INFO] new_names=['竹内']
+
+■ソース

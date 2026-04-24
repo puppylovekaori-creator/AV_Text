@@ -1,0 +1,932 @@
+# avtext_common.py
+# -*- coding: utf-8 -*-
+"""
+avtext_common.py
+
+av_text_convert.py / av_title_convert.py の共通部品。
+
+方針
+- import時にDB接続やログ開始などの副作用を起こさない
+- 共通ロジックをクラス化し、入口スクリプトは入出力と固有ルールに集中させる
+- 異体字吸収（例: 步/歩）と多段エイリアス解決を共通化する
+"""
+
+from __future__ import annotations
+
+import csv
+import re
+import configparser
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Iterable, Optional, Any
+
+
+# ============================================================
+# 1) ログ
+# ============================================================
+
+class SimpleLogger:
+    def __init__(self, log_path: Path):
+        self.log_path = Path(log_path)
+
+    def log(self, msg: str) -> None:
+        try:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            with self.log_path.open("a", encoding="utf-8") as f:
+                f.write(f"{ts} {msg}\n")
+        except Exception:
+            # 既存互換：ログ失敗は握りつぶす
+            pass
+
+
+# ============================================================
+# 2) DB設定・接続
+# ============================================================
+
+class DbConfigLoader:
+    """
+    互換吸収:
+    - DbConfigLoader.load_from_ini(path)          (従来)
+    - DbConfigLoader(logger).load_from_ini(path)  (共通化後の呼び方)
+    """
+
+    def __init__(self, logger: Optional[SimpleLogger] = None):
+        self.logger = logger
+
+    def _log(self, msg: str) -> None:
+        if self.logger:
+            self.logger.log(msg)
+
+    def load_from_ini(self_or_path, ini_path: Path | None = None) -> dict | None:
+        """
+        呼び方差をcommon側で吸収する。
+
+        - class呼び:
+            DbConfigLoader.load_from_ini(path)
+            -> self_or_path が Path 相当として渡ってくる（通常メソッドのdescriptor仕様）
+        - instance呼び:
+            DbConfigLoader(logger).load_from_ini(path)
+            -> self_or_path がインスタンス、ini_path が Path
+        """
+        # class呼び: DbConfigLoader.load_from_ini(path)
+        if ini_path is None and isinstance(self_or_path, (str, Path)):
+            loader = None
+            ini_path = Path(self_or_path)
+            logger = None
+        else:
+            loader = self_or_path
+            ini_path = Path(ini_path) if ini_path is not None else Path("setting.ini")
+            logger = getattr(loader, "logger", None)
+
+        if not ini_path.exists():
+            if logger:
+                logger.log(f"[INFO] setting.ini not found. DB access disabled. path={ini_path}")
+            return None
+
+        config = configparser.ConfigParser()
+        try:
+            config.read(ini_path, encoding="utf-8")
+        except Exception as e:
+            if logger:
+                logger.log(f"[WARN] failed to read setting.ini: {e!r}")
+            return None
+
+        section = None
+        if config.has_section("DB Setting"):
+            section = config["DB Setting"]
+        elif config.has_section("DB"):
+            section = config["DB"]
+        else:
+            if logger:
+                logger.log("[WARN] setting.ini: section [DB Setting] or [DB] not found.")
+            return None
+
+        def clean(v: Optional[str], default: str = "") -> str:
+            s = (v if v is not None else default).strip()
+            return s.strip("'\"")
+
+        server = clean(section.get("IP") or section.get("Server") or "localhost")
+        user = clean(section.get("User") or "sa")
+        password = clean(section.get("Password") or "")
+        database = clean(section.get("Database") or "FileDB")
+
+        cfg = {
+            "server"  : server,
+            "user"    : user,
+            "password": password,
+            "database": database,
+        }
+
+        if logger:
+            logger.log(f"[INFO] DB config loaded: server={server}, database={database}")
+
+        return cfg
+
+
+class DbConnector:
+    def __init__(self, logger: Optional[SimpleLogger] = None):
+        self.logger = logger
+
+    def _log(self, msg: str) -> None:
+        if self.logger:
+            self.logger.log(msg)
+
+    def connect(self, cfg: dict) -> object | None:
+        """
+        pyodbc 接続（ODBC Driver 18/17 優先）
+        失敗時は None を返す（CSVフォールバック前提）
+        """
+        try:
+            import pyodbc  # type: ignore
+        except Exception as e:
+            self._log(f"[WARN] pyodbc import failed: {e!r}")
+            return None
+
+        if not cfg:
+            self._log("[INFO] DB config is empty. DB disabled.")
+            return None
+
+        driver_candidates = [
+            "ODBC Driver 18 for SQL Server",
+            "ODBC Driver 17 for SQL Server",
+        ]
+
+        try:
+            for d in pyodbc.drivers():
+                if "SQL Server" in d and d not in driver_candidates:
+                    driver_candidates.append(d)
+        except Exception as e:
+            self._log(f"[WARN] pyodbc.drivers() failed: {e!r}")
+
+        last_err = None
+        for drv in driver_candidates:
+            conn_str = (
+                f"DRIVER={{{drv}}};"
+                f"SERVER={cfg.get('server', '')};"
+                f"DATABASE={cfg.get('database', '')};"
+                f"UID={cfg.get('user', '')};PWD={cfg.get('password', '')};"
+                "TrustServerCertificate=yes;"
+            )
+            try:
+                conn = pyodbc.connect(conn_str, timeout=3)
+                self._log(f"[INFO] DB connected with driver '{drv}'.")
+                return conn
+            except Exception as e:
+                last_err = e
+                self._log(f"[WARN] DB connect failed with '{drv}': {e!r}")
+
+        self._log(f"[WARN] All DB connect attempts failed. last_err={last_err!r}")
+        return None
+
+
+# ============================================================
+# 3) エイリアスデータ読み込み
+# ============================================================
+
+@dataclass(frozen=True)
+class AliasRecord:
+    old: str = ""
+    new: str = ""
+    display: str = ""
+
+
+class AliasRepository:
+    """
+    DB優先、空ならCSV。
+    display空時補完は mode で切替可能（入口スクリプト差異を吸収）。
+
+    display_fill_mode:
+      - "none"   : 補完しない（av_text_convert向け）
+      - "simple" : old(new) / new / old で補完（av_title_convert向け互換）
+    """
+
+    def __init__(
+        self,
+        logger: Optional[SimpleLogger] = None,
+        char_normalizer: Optional["CharNormalizer"] = None,
+        table_name: str = "dbo.ACTRESS_DATA",
+        display_fill_mode: str = "none",
+    ):
+        self.logger = logger
+        self.char_normalizer = char_normalizer or CharNormalizer()
+        self.table_name = table_name
+        self.display_fill_mode = display_fill_mode
+
+    def _log(self, msg: str) -> None:
+        if self.logger:
+            self.logger.log(msg)
+
+    def _clean(self, v: Any) -> str:
+        s = "" if v is None else str(v)
+        return self.char_normalizer.normalize_for_output(s.strip())
+
+    def _fill_display(self, old: str, new: str, display: str) -> str:
+        if display:
+            return display
+
+        if self.display_fill_mode != "simple":
+            return display
+
+        if old and new:
+            return f"{old}({new})"
+        if new:
+            return new
+        if old:
+            return old
+        return ""
+
+    def _row_to_record(self, old: Any, new: Any, display: Any) -> AliasRecord | None:
+        old_s = self._clean(old)
+        new_s = self._clean(new)
+        disp_s = self._clean(display)
+        disp_s = self._fill_display(old_s, new_s, disp_s)
+
+        if not old_s and not new_s and not disp_s:
+            return None
+
+        return AliasRecord(old=old_s, new=new_s, display=disp_s)
+
+    def load_from_csv(self, csv_path: Path) -> list[AliasRecord]:
+        csv_path = Path(csv_path)
+        results: list[AliasRecord] = []
+
+        if not csv_path.exists():
+            self._log(f"[INFO] aliases.csv not found: {csv_path}")
+            return results
+
+        try:
+            with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    rec = self._row_to_record(
+                        row.get("old"),
+                        row.get("new"),
+                        row.get("display"),
+                    )
+                    if rec:
+                        results.append(rec)
+            self._log(f"[INFO] {len(results)} aliases loaded from CSV.")
+        except Exception as e:
+            self._log(f"[ERROR] load_from_csv failed: {e!r}")
+
+        return results
+
+    def load_from_db(self, conn) -> list[AliasRecord]:
+        results: list[AliasRecord] = []
+
+        if conn is None:
+            return results
+
+        sql = f"SELECT OLD_NAME, NEW_NAME, DISPLAY_NAME FROM {self.table_name}"
+        try:
+            cur = conn.cursor()
+            cur.execute(sql)
+            for old, new, disp in cur:
+                rec = self._row_to_record(old, new, disp)
+                if rec:
+                    results.append(rec)
+            self._log(f"[INFO] {len(results)} aliases loaded from DB.")
+        except Exception as e:
+            self._log(f"[ERROR] load_from_db failed: {e!r}")
+
+        return results
+
+    def load(self_or_conn, conn_or_csv, csv_path: Path | None = None) -> list[AliasRecord]:
+        """
+        互換吸収:
+        - class呼び:
+            AliasRepository.load(conn, csv_path)
+            -> self_or_conn が conn、conn_or_csv が csv_path、csv_path が None
+        - instance呼び:
+            repo.load(conn, csv_path)
+            -> self_or_conn が repo、conn_or_csv が conn、csv_path が Path
+        """
+        # class呼び判定（self_or_conn が AliasRepository ではない）
+        if not isinstance(self_or_conn, AliasRepository):
+            conn = self_or_conn
+            csv_path = Path(conn_or_csv)
+            repo = AliasRepository()
+        else:
+            repo = self_or_conn
+            conn = conn_or_csv
+            csv_path = Path(csv_path) if csv_path is not None else Path(conn_or_csv)
+
+        if conn is not None:
+            rows = repo.load_from_db(conn)
+            if rows:
+                return rows
+            repo._log("[WARN] DB returned no aliases. Fallback to CSV.")
+
+        return repo.load_from_csv(csv_path)
+
+
+# ============================================================
+# 4) 異体字・表記ゆれ正規化
+# ============================================================
+
+class CharNormalizer:
+    """
+    比較用キー生成の統一。
+    まずは実害確認済みのみ最小限で吸収（過剰変換を避ける）。
+    """
+    DEFAULT_VARIANT_MAP = {
+        "步": "歩",
+    }
+
+    def __init__(self, variant_map: Optional[dict[str, str]] = None):
+        self.variant_map = dict(self.DEFAULT_VARIANT_MAP)
+        if variant_map:
+            self.variant_map.update(variant_map)
+
+    def _apply_variant_map(self, text: str) -> str:
+        if not text:
+            return text
+        return "".join(self.variant_map.get(ch, ch) for ch in text)
+
+    def normalize_for_match(self, text: str) -> str:
+        """
+        比較キー用。
+        - 前後空白trim
+        - 異体字吸収
+        """
+        if text is None:
+            return ""
+        s = str(text).strip()
+        if not s:
+            return ""
+        return self._apply_variant_map(s)
+
+    def normalize_for_output(self, text: str) -> str:
+        """
+        出力保持用（現時点では最小限）。
+        """
+        if text is None:
+            return ""
+        s = str(text).strip()
+        if not s:
+            return ""
+        return self._apply_variant_map(s)
+
+
+# ============================================================
+# 5) エイリアス解決（多段チェーン対応・循環検出）
+# ============================================================
+
+class AliasResolver:
+    """
+    OLD -> NEW -> ... の多段解決。
+    resolver内部キーは normalize_for_match 後で管理。
+    最終表示は canonical display（display優先）を返す。
+    """
+
+    def __init__(
+        self,
+        aliases: Iterable[AliasRecord] | None,
+        logger: Optional[SimpleLogger] = None,
+        char_normalizer: Optional[CharNormalizer] = None,
+    ):
+        self.aliases = list(aliases or [])
+        self.logger = logger
+        self.char_normalizer = char_normalizer or CharNormalizer()
+
+        self._built = False
+
+        # build後に埋まる
+        self._key_to_next_key: dict[str, str] = {}
+        self._display_by_old_key: dict[str, str] = {}
+        self._key_to_surface: dict[str, str] = {}
+        self._all_name_keys: set[str] = set()
+
+        self._key_to_display: dict[str, str] = {}
+        self._surface_to_display: dict[str, str] = {}
+        self._known_tokens: set[str] = set()
+        self._alias_names_sorted: list[str] = []
+
+    def _log(self, msg: str) -> None:
+        if self.logger:
+            self.logger.log(msg)
+
+    def _mk(self, text: str) -> str:
+        return self.char_normalizer.normalize_for_match(text)
+
+    def _surface(self, text: str) -> str:
+        return self.char_normalizer.normalize_for_output(text)
+
+    def _remember_surface(self, key: str, surface: str) -> None:
+        if not key:
+            return
+        if key not in self._key_to_surface:
+            self._key_to_surface[key] = surface
+
+    def _pick_surface(self, key: str) -> str:
+        return self._key_to_surface.get(key, key)
+
+    def build(self):
+        self._key_to_next_key.clear()
+        self._display_by_old_key.clear()
+        self._key_to_surface.clear()
+        self._all_name_keys.clear()
+        self._key_to_display.clear()
+        self._surface_to_display.clear()
+        self._known_tokens.clear()
+        self._alias_names_sorted.clear()
+
+        alias_surfaces: set[str] = set()
+        explicit_displays: set[str] = set()
+
+        # 1) 下準備（normalize_for_match で内部キー化）
+        for rec in self.aliases:
+            old_s = self._surface(rec.old)
+            new_s = self._surface(rec.new)
+            disp_s = self._surface(rec.display)
+
+            old_k = self._mk(old_s)
+            new_k = self._mk(new_s)
+            disp_k = self._mk(disp_s)
+
+            if old_k:
+                self._all_name_keys.add(old_k)
+                self._remember_surface(old_k, old_s or old_k)
+                alias_surfaces.add(old_s or self._pick_surface(old_k))
+
+            if new_k:
+                self._all_name_keys.add(new_k)
+                self._remember_surface(new_k, new_s or new_k)
+                alias_surfaces.add(new_s or self._pick_surface(new_k))
+
+            if old_k and new_k:
+                self._key_to_next_key[old_k] = new_k
+
+            if old_k and disp_s:
+                self._display_by_old_key[old_k] = disp_s
+                explicit_displays.add(disp_s)
+
+            if disp_k and disp_s:
+                # display自体も既知トークン扱いしやすいようsurface確保
+                self._remember_surface(disp_k, disp_s)
+
+        visited_global: set[str] = set()
+        canonical_displays: set[str] = set()
+
+        # 2) チェーン解決（OLD->NEW）
+        for start_key in list(self._key_to_next_key.keys()):
+            if start_key in visited_global:
+                continue
+
+            chain: list[str] = []
+            seen: set[str] = set()
+            cur = start_key
+            prev_key = start_key  # 終端直前（fallback用）
+
+            while True:
+                if cur in seen:
+                    self._log(
+                        f"[WARN] alias chain cycle detected: "
+                        f"start={self._pick_surface(start_key)}, at={self._pick_surface(cur)}, "
+                        f"chain={[self._pick_surface(k) for k in chain]}"
+                    )
+                    break
+
+                seen.add(cur)
+                chain.append(cur)
+
+                nxt = self._key_to_next_key.get(cur, "")
+                if nxt:
+                    prev_key = cur
+                    cur = nxt
+                    continue
+                break
+
+            terminal_key = chain[-1] if chain else start_key
+
+            # explicit display を終端側から優先
+            canonical: Optional[str] = None
+            for node_key in reversed(chain):
+                disp = self._display_by_old_key.get(node_key, "")
+                if disp:
+                    canonical = disp
+                    break
+
+            # explicit display が無い場合のfallback
+            # ユーザー既存挙動に合わせて「終端直前(prev)(terminal)」優先
+            if canonical is None:
+                if prev_key and terminal_key and prev_key != terminal_key:
+                    prev_surface = self._pick_surface(prev_key)
+                    term_surface = self._pick_surface(terminal_key)
+                    canonical = f"{prev_surface}({term_surface})"
+                else:
+                    canonical = self._pick_surface(terminal_key) or self._pick_surface(start_key)
+
+            canonical = self._surface(canonical)
+            canonical_displays.add(canonical)
+
+            for node_key in chain:
+                self._key_to_display[node_key] = canonical
+
+            visited_global |= set(chain)
+
+        # 3) 孤立ノード（チェーンに乗らない名前）
+        for name_key in self._all_name_keys:
+            if name_key in self._key_to_display:
+                continue
+
+            disp = self._display_by_old_key.get(name_key, "")
+            if disp:
+                canonical = self._surface(disp)
+            else:
+                canonical = self._pick_surface(name_key)
+
+            self._key_to_display[name_key] = canonical
+            canonical_displays.add(canonical)
+
+        # 4) surface -> display マップ構築
+        #    （old/new の元表記 + normalize後表記の両方を吸えるようにする）
+        for rec in self.aliases:
+            for src in (rec.old, rec.new):
+                s = self._surface(src)
+                if not s:
+                    continue
+                k = self._mk(s)
+                disp = self._key_to_display.get(k)
+                if disp:
+                    self._surface_to_display[s] = disp
+                    norm_surface = self._pick_surface(k)
+                    self._surface_to_display[norm_surface] = disp
+
+        # displayは自身に解決
+        for disp in explicit_displays | canonical_displays:
+            if disp:
+                self._surface_to_display[disp] = disp
+
+        # known tokens
+        self._known_tokens = set(alias_surfaces) | set(explicit_displays) | set(canonical_displays)
+        # 異体字吸収後の表記も既知に加える
+        self._known_tokens |= {self._pick_surface(k) for k in self._all_name_keys}
+
+        # alias names sorted（old/newの候補）
+        self._alias_names_sorted = sorted(
+            {t for t in alias_surfaces if t},
+            key=len,
+            reverse=True,
+        )
+
+        self._built = True
+        return self
+
+    def _ensure_built(self):
+        if not self._built:
+            self.build()
+
+    def resolve_display(self, name: str) -> str | None:
+        self._ensure_built()
+
+        s = self._surface(name)
+        if not s:
+            return None
+
+        # surface直 hit
+        if s in self._surface_to_display:
+            return self._surface_to_display[s]
+
+        # normalize_for_match key hit（步/歩など）
+        k = self._mk(s)
+        if k in self._key_to_display:
+            return self._key_to_display[k]
+
+        # 既にdisplayそのものの異体字違いだった場合
+        norm_surface = self._pick_surface(k)
+        if norm_surface in self._surface_to_display:
+            return self._surface_to_display[norm_surface]
+
+        return None
+
+    def get_alias_names_sorted(self) -> list[str]:
+        self._ensure_built()
+        return list(self._alias_names_sorted)
+
+    def get_known_tokens(self) -> set[str]:
+        self._ensure_built()
+        return set(self._known_tokens)
+
+    def get_name_to_display_map(self) -> dict[str, str]:
+        self._ensure_built()
+        return dict(self._surface_to_display)
+
+
+# ============================================================
+# 6) テキスト正規化（共通部分）
+# ============================================================
+
+class TextNormalizer:
+    def __init__(
+        self,
+        logger: Optional[SimpleLogger] = None,
+        char_normalizer: Optional[CharNormalizer] = None,
+    ):
+        self.logger = logger
+        self.char_normalizer = char_normalizer or CharNormalizer()
+
+    def _log(self, msg: str) -> None:
+        if self.logger:
+            self.logger.log(msg)
+
+    def _nout(self, text: str) -> str:
+        return self.char_normalizer.normalize_for_output(text)
+
+    def normalize_title_text(self, raw: str) -> str:
+        """
+        タイトル系の軽い正規化（共通で使える部分のみ）
+        """
+        text = self._nout(raw or "")
+        text = text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+        text = text.replace("　", " ")
+
+        # スラッシュは区切りとして扱いやすくする
+        text = text.replace("／", "/")
+        text = text.replace("/", " ")
+
+        # 特殊マスク復元
+        text = text.replace("F**K", "FUCK")
+        # その他の半角 * は全角へ
+        text = text.replace("*", "＊")
+
+        text = re.sub(r"[ ]+", " ", text)
+        return text.strip()
+
+    def canonicalize_parenthesized_alias_tokens(self, text: str, resolver: AliasResolver) -> str:
+        """
+        A(B) / (A)B のような括弧別名を display へ寄せる。
+        （片側が既知なら採用）
+        """
+        if not text:
+            return text
+
+        text = self._nout(text)
+
+        def repl_ab(m: re.Match) -> str:
+            a = self._nout(m.group(1))
+            b = self._nout(m.group(2))
+            da = resolver.resolve_display(a)
+            if da:
+                return da
+            db = resolver.resolve_display(b)
+            if db:
+                return db
+            return self._nout(m.group(0))
+
+        def repl_ba(m: re.Match) -> str:
+            a = self._nout(m.group(1))
+            b = self._nout(m.group(2))
+            da = resolver.resolve_display(a)
+            if da:
+                return da
+            db = resolver.resolve_display(b)
+            if db:
+                return db
+            return self._nout(m.group(0))
+
+        # A(B)
+        text = re.sub(r'([^\s()]+)\(([^\s()]+)\)', repl_ab, text)
+        # (A)B
+        text = re.sub(r'\(([^\s()]+)\)([^\s()]+)', repl_ba, text)
+        return text
+
+    def sanitize_for_windows_filename(
+        self,
+        name: str,
+        *,
+        max_len: int,
+        truncate: bool,
+        warn_only: bool,
+        logger: Optional[SimpleLogger] = None,
+    ) -> str:
+        """
+        Windows禁止文字変換 + 制御文字除去 + 末尾空白/ピリオド除去
+
+        長さ制限は引数で制御:
+        - truncate=False, warn_only=True なら「切らない・WARNのみ」
+        """
+        lg = logger or self.logger
+        s = self._nout(name or "")
+
+        trans = str.maketrans({
+            '\\': '＼',
+            '/': ' ',
+            ':': '：',
+            '*': '＊',
+            '?': '？',
+            '"': '”',
+            '<': '＜',
+            '>': '＞',
+            '|': '｜',
+        })
+        s = s.translate(trans)
+        s = re.sub(r'[\x00-\x1F]', '', s)
+        s = s.rstrip(" .")
+
+        if max_len > 0 and len(s) > max_len:
+            if truncate:
+                s = s[:max_len]
+                if lg:
+                    lg.log(f"[WARN] filename truncated to {max_len} chars.")
+            elif warn_only:
+                if lg:
+                    lg.log(
+                        f"[WARN] filename length over threshold: len={len(s)} > {max_len} "
+                        f"(no truncation)"
+                    )
+            else:
+                if lg:
+                    lg.log(
+                        f"[WARN] filename length over threshold: len={len(s)} > {max_len} "
+                        f"(policy unspecified)"
+                    )
+
+        return s
+
+
+# ============================================================
+# 7) 入出力補助
+# ============================================================
+
+class FileTextIO:
+    @staticmethod
+    def load_text_with_fallback(
+        path: Path,
+        encodings: tuple[str, ...] = ("utf-8", "cp932"),
+    ) -> tuple[str, str]:
+        path = Path(path)
+
+        last_err = None
+        for enc in encodings:
+            try:
+                with path.open("r", encoding=enc) as f:
+                    return f.read(), enc
+            except UnicodeDecodeError as e:
+                last_err = e
+                continue
+
+        raise UnicodeError(
+            f"failed to decode {path} as {', '.join(encodings)}; last_err={last_err!r}"
+        )
+
+    @staticmethod
+    def load_first_line_with_fallback(
+        path: Path,
+        encodings: tuple[str, ...] = ("utf-8", "cp932"),
+    ) -> tuple[str, str]:
+        text, enc = FileTextIO.load_text_with_fallback(path, encodings=encodings)
+        lines = text.splitlines()
+        first = lines[0].strip() if lines else ""
+        return first, enc
+
+    @staticmethod
+    def write_cp932(path: Path, text: str) -> None:
+        """
+        cp932固定書き込み（errors="ignore"互換）
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        encoded = (text or "").encode("cp932", errors="ignore")
+        decoded = encoded.decode("cp932")
+        with path.open("w", encoding="cp932", newline=None) as f:
+            f.write(decoded)
+
+
+# ============================================================
+# 追加の共通小物（入口から使う想定）
+# ============================================================
+
+_UNKNOWN_ACTRESS_LINE_RE = re.compile(
+    r"^\s*[？?]\s*[‐-‒–—―ー\-−]\s*[？?]\s*$"
+)
+
+
+def is_unknown_actress_placeholder_line(line: str) -> bool:
+    """
+    actress.txt の「？−？」行を無視するための判定。
+    例:
+      ？−？
+      ?-?
+      ？ - ？
+    """
+    if line is None:
+        return False
+    return bool(_UNKNOWN_ACTRESS_LINE_RE.match(line))
+
+
+def remove_ignored_actress_lines(text: str) -> str:
+    """
+    actress.txt の中から、プレースホルダ行（例: ？−？）を除去する。
+    他の行順は維持。
+    """
+    if not text:
+        return text
+
+    out_lines: list[str] = []
+    for line in text.splitlines():
+        if is_unknown_actress_placeholder_line(line):
+            continue
+        out_lines.append(line)
+    return "\n".join(out_lines)
+
+
+def get_text_excluding_first_line(text: str) -> str:
+    if not text:
+        return ""
+    lines = text.splitlines()
+    if len(lines) <= 1:
+        return ""
+    return "\n".join(lines[1:])
+
+
+def dedupe_line_full_repeat(raw_text: str) -> str:
+    """
+    行に空白/括弧/特定区切りがなく、同一文字列が2回連結されている場合に半分へ圧縮。
+    例: 初愛ねんね初愛ねんね -> 初愛ねんね
+    """
+    if not raw_text:
+        return raw_text
+
+    out_lines: list[str] = []
+    for line in raw_text.splitlines():
+        s = line.strip()
+        if not s:
+            out_lines.append(line)
+            continue
+
+        if re.search(r"\s", s):
+            out_lines.append(line)
+            continue
+
+        if any(ch in s for ch in "()（）／【】"):
+            out_lines.append(line)
+            continue
+
+        n = len(s)
+        if n % 2 == 0:
+            half = s[: n // 2]
+            if half * 2 == s:
+                out_lines.append(half)
+                continue
+
+        out_lines.append(line)
+
+    return "\n".join(out_lines)
+
+
+def has_people_separators(text: str) -> bool:
+    """
+    registration_text が「既に人名区切り済み」かの軽判定。
+    """
+    s = (text or "").strip()
+    if not s:
+        return False
+
+    if "】・【" in s:
+        return True
+    if "／" in s or "/" in s:
+        return True
+    if "・" in s or "、" in s or "," in s:
+        return True
+    if "\t" in s:
+        return True
+    if "\n" in s or "\r" in s:
+        return True
+    if " " in s:
+        return True
+
+    return False
+
+
+def safe_close(conn, logger: Optional[SimpleLogger] = None) -> None:
+    try:
+        if conn is not None:
+            conn.close()
+    except Exception as e:
+        if logger:
+            logger.log(f"[WARN] connection close failed: {e!r}")
+
+
+__all__ = [
+    # classes
+    "SimpleLogger",
+    "DbConfigLoader",
+    "DbConnector",
+    "AliasRecord",
+    "AliasRepository",
+    "CharNormalizer",
+    "AliasResolver",
+    "TextNormalizer",
+    "FileTextIO",
+    # helpers
+    "is_unknown_actress_placeholder_line",
+    "remove_ignored_actress_lines",
+    "get_text_excluding_first_line",
+    "dedupe_line_full_repeat",
+    "has_people_separators",
+    "safe_close",
+]

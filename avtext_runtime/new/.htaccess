@@ -1,0 +1,2 @@
+AddType text/plain .txt
+AddCharset UTF-8 .txt

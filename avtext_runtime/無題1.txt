@@ -1,0 +1,5 @@
+#contentAreaContextMenu menuitem:not(.webextension-menuitem),
+#contentAreaContextMenu menu:not(.webextension-menuitem),
+#contentAreaContextMenu menuseparator {
+  display: none !important;
+}

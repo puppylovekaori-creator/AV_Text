@@ -1,0 +1,15 @@
+Windows Registry Editor Version 5.00
+
+; 背景（ディレクトリの空白部分）右クリック用
+
+[HKEY_CLASSES_ROOT\Directory\Background\shell\CopyToTitleTxt]
+@="コピーしてtitle.txtに貼りつけ"
+
+[HKEY_CLASSES_ROOT\Directory\Background\shell\CopyToTitleTxt\command]
+@="powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File \"C:\\Users\\ジョージ・ブッシュ\\AppData\\Roaming\\sakura\\avtext\\paste_to_title.ps1\""
+
+[HKEY_CLASSES_ROOT\Directory\Background\shell\CopyToActressTxt]
+@="コピーしてactress.txtに貼りつけ"
+
+[HKEY_CLASSES_ROOT\Directory\Background\shell\CopyToActressTxt\command]
+@="powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File \"C:\\Users\\ジョージ・ブッシュ\\AppData\\Roaming\\sakura\\avtext\\paste_to_actress.ps1\""

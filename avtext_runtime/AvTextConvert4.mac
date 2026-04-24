@@ -1,0 +1,5 @@
+ExecCommand('python "C:/Users/ジョージ・ブッシュ/AppData/Roaming/sakura/avtext/no_title_to_conv.py"',0);
+
+// 変換結果ファイルを開いてフォーカスを移す
+FileOpen("C:/Users/ジョージ・ブッシュ/AppData/Roaming/sakura/avtext/conv_converted.txt");
+FileReopen(0);   // 念のため開き直して最新化

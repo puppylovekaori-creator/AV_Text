@@ -1,0 +1,9 @@
+{
+  "name": "avtext_helper",
+  "description": "AV text helper for Sakura editor",
+  "path": "C:\\Users\\ジョージ・ブッシュ\\AppData\\Roaming\\sakura\\avtext\\avtext_helper.bat",
+  "type": "stdio",
+  "allowed_extensions": [
+    "av-text-paster@example.com"
+  ]
+}
