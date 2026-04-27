@@ -45,7 +45,8 @@
 /**********************************/
 
 /* Custom context-menu ordering */
-#contentAreaContextMenu > :is(menu, menuitem)[label="AV Text Paster"] {
+#contentAreaContextMenu > :is(menu, menuitem)[label="AV Text Paster"],
+#contentAreaContextMenu > :is(menu, menuitem)[label="サクラエディタを前面に"] {
   -moz-box-ordinal-group: 0 !important;
 }
 
@@ -57,6 +58,7 @@
   -moz-box-ordinal-group: 2 !important;
 }
 
-#contentAreaContextMenu > menuseparator:has(+ :is(menu, menuitem)[label="AV Text Paster"]) {
+#contentAreaContextMenu > menuseparator:has(+ :is(menu, menuitem)[label="AV Text Paster"]),
+#contentAreaContextMenu > menuseparator:has(+ :is(menu, menuitem)[label="サクラエディタを前面に"]) {
   display: none !important;
 }

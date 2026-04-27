@@ -1,0 +1,33 @@
+:root[data-fx-contrast-mode="light-page"] {
+  --fx-contrast-surface-bg: #f4efe4;
+  --fx-contrast-text: #1f1f1f;
+  --fx-contrast-link: #0c3f87;
+  --fx-contrast-link-hover: #a83b16;
+  --fx-contrast-link-visited: #5e4c8d;
+  --fx-contrast-selection-bg: #d6c8a4;
+}
+
+:root[data-fx-contrast-mode="light-page"] [data-fx-contrast-surface="true"] {
+  background-color: var(--fx-contrast-surface-bg) !important;
+  color: var(--fx-contrast-text) !important;
+}
+
+:root[data-fx-contrast-mode="light-page"] [data-fx-contrast-surface="true"] a:any-link {
+  color: var(--fx-contrast-link) !important;
+  text-decoration-thickness: 0.1em;
+  text-underline-offset: 0.14em;
+}
+
+:root[data-fx-contrast-mode="light-page"] [data-fx-contrast-surface="true"] a:any-link:hover,
+:root[data-fx-contrast-mode="light-page"] [data-fx-contrast-surface="true"] a:any-link:focus-visible {
+  color: var(--fx-contrast-link-hover) !important;
+}
+
+:root[data-fx-contrast-mode="light-page"] [data-fx-contrast-surface="true"] a:any-link:visited {
+  color: var(--fx-contrast-link-visited) !important;
+}
+
+:root[data-fx-contrast-mode="light-page"] [data-fx-contrast-surface="true"] ::selection {
+  background-color: var(--fx-contrast-selection-bg);
+  color: var(--fx-contrast-text);
+}
