@@ -3,8 +3,9 @@
 Firefox Native Messaging host for AV text support.
 
 target:
-  - "title"           : title.txt の 1 行目を上書き（2行目以降は維持）
+  - "title"           : title.txt を単一行に正規化して上書き
   - "actress"         : actress.txt を全置換
+  - "actress_with_alias": actress.txt を「選択文字列()」で全置換
   - "no"              : no.txt を全置換
   - "focus_sakura"    : サクラエディタを最前面＆フォーカス
   - "check_actress"   : dbo.ACTRESS_DATA の OLD_NAME / NEW_NAME 完全一致で登録済判定
@@ -96,25 +97,18 @@ def write_text_full(path: Path, text: str) -> None:
         f.write("\n")
 
 
+def _normalize_single_line_text(text: str) -> str:
+    text = "" if text is None else str(text)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    parts = [part.strip() for part in text.split("\n") if part.strip()]
+    return " ".join(parts).strip()
+
+
 def write_first_line(path: Path, text: str) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    lines = []
-    if path.exists():
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except UnicodeDecodeError:
-            lines = path.read_text(encoding="utf-8-sig").splitlines()
-
-    if lines:
-        if lines[0] == text:
-            return
-        lines[0] = text
-    else:
-        lines = [text]
-
+    normalized = _normalize_single_line_text(text)
     with path.open("w", encoding="utf-8", newline="\n") as f:
-        f.write("\n".join(lines))
+        f.write(normalized)
         f.write("\n")
 
 
@@ -263,16 +257,53 @@ def get_db_connection():
     raise RuntimeError(f"All DB connect attempts failed: {last_err!r}")
 
 
+def _build_display_name(name: str, rows) -> str:
+    name = (name or "").strip()
+    best_display = name
+    best_score = -1
+
+    for row in rows or []:
+        try:
+            old_name, new_name, display_name = row
+        except Exception:
+            continue
+
+        old_s = (old_name or "").strip()
+        new_s = (new_name or "").strip()
+        disp_s = (display_name or "").strip()
+
+        if disp_s:
+            candidate = disp_s
+            score = 3
+        elif old_s and new_s:
+            candidate = f"{old_s}({new_s})"
+            score = 2
+        else:
+            candidate = old_s or new_s or name
+            score = 1 if candidate else 0
+
+        if old_s == name or new_s == name:
+            score += 1
+
+        if score > best_score and candidate:
+            best_display = candidate
+            best_score = score
+
+    return best_display or name
+
+
 def _check_actress_and_maybe_register(name: str, do_register: bool):
     """
     戻り:
       found_before: bool
+      has_alias: bool
+      display_name: str
       registered: bool
       already_exists: bool
     """
     name = (name or "").strip()
     if not name:
-        return False, False, False
+        return False, False, "", False, False
 
     conn = None
     try:
@@ -281,33 +312,43 @@ def _check_actress_and_maybe_register(name: str, do_register: bool):
 
         # 判定（OLD/NEWの完全一致）
         cur.execute(
-            "SELECT TOP 1 1 FROM dbo.ACTRESS_DATA WHERE OLD_NAME = ? OR NEW_NAME = ?",
+            "SELECT OLD_NAME, NEW_NAME, DISPLAY_NAME FROM dbo.ACTRESS_DATA WHERE OLD_NAME = ? OR NEW_NAME = ?",
             (name, name),
         )
-        row = cur.fetchone()
-        found_before = (row is not None)
+        rows = cur.fetchall()
+        found_before = bool(rows)
+        has_alias = any(
+            bool((old_name or "").strip()) and bool((new_name or "").strip())
+            for old_name, new_name, _display_name in rows
+        )
+        display_name = _build_display_name(name, rows)
 
         if found_before:
-            return True, False, True
+            return True, has_alias, display_name, False, True
 
         if not do_register:
-            return False, False, False
+            return False, False, name, False, False
 
         # 登録（OLD_NAMEのみ）
         # 念のため二重チェック
         cur.execute(
-            "SELECT TOP 1 1 FROM dbo.ACTRESS_DATA WHERE OLD_NAME = ? OR NEW_NAME = ?",
+            "SELECT OLD_NAME, NEW_NAME, DISPLAY_NAME FROM dbo.ACTRESS_DATA WHERE OLD_NAME = ? OR NEW_NAME = ?",
             (name, name),
         )
-        row2 = cur.fetchone()
-        if row2 is not None:
-            return True, False, True
+        rows2 = cur.fetchall()
+        if rows2:
+            has_alias = any(
+                bool((old_name or "").strip()) and bool((new_name or "").strip())
+                for old_name, new_name, _display_name in rows2
+            )
+            display_name = _build_display_name(name, rows2)
+            return True, has_alias, display_name, False, True
 
         cur.execute(
             "INSERT INTO dbo.ACTRESS_DATA (OLD_NAME) VALUES (?)",
             (name,),
         )
-        return False, True, False
+        return False, False, name, True, False
 
     finally:
         try:
@@ -330,6 +371,17 @@ def handle_message(msg: dict) -> dict:
         write_text_full(ACTRESS_PATH, text)
         return {"status": "ok", "target": target, "req_id": req_id}
 
+    if target == "actress_with_alias":
+        normalized_text = _normalize_single_line_text(text)
+        actress_text = f"{normalized_text}()" if normalized_text else "()"
+        write_text_full(ACTRESS_PATH, actress_text)
+        return {
+            "status": "ok",
+            "target": target,
+            "req_id": req_id,
+            "text": actress_text,
+        }
+
     if target == "no":
         write_text_full(NO_PATH, text)
         return {"status": "ok", "target": target, "req_id": req_id}
@@ -342,12 +394,17 @@ def handle_message(msg: dict) -> dict:
         # ここでは登録しない（クリック登録は register_actress 側）
         try:
             debug_log("[INFO] check_actress start")
-            found_before, registered, already_exists = _check_actress_and_maybe_register(text, do_register=False)
+            found_before, has_alias, display_name, registered, already_exists = _check_actress_and_maybe_register(
+                text,
+                do_register=False,
+            )
             return {
                 "status": "ok",
                 "target": target,
                 "req_id": req_id,
                 "found": bool(found_before),
+                "has_alias": bool(has_alias),
+                "display_name": display_name or text,
             }
         except Exception as e:
             debug_log(f"[WARN] check_actress failed: {e!r}")
@@ -357,13 +414,18 @@ def handle_message(msg: dict) -> dict:
         # クリック時のみ登録
         try:
             debug_log("[INFO] register_actress start")
-            found_before, registered, already_exists = _check_actress_and_maybe_register(text, do_register=True)
+            found_before, has_alias, display_name, registered, already_exists = _check_actress_and_maybe_register(
+                text,
+                do_register=True,
+            )
             return {
                 "status": "ok",
                 "target": target,
                 "req_id": req_id,
                 "registered": bool(registered),
                 "already_exists": bool(already_exists or found_before),
+                "has_alias": bool(has_alias),
+                "display_name": display_name or text,
             }
         except Exception as e:
             debug_log(f"[WARN] register_actress failed: {e!r}")
