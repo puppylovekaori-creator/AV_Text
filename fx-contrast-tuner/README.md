@@ -10,10 +10,20 @@ Files:
   - Firefox MV3 addon manifest.
 - `content.js`
   - Detection logic.
-  - Tweak `CONFIG.selectors`, `perChannelThreshold`, `luminanceThreshold`, `minArea`, and `debounceMs`.
+  - Reads `storage.local` and reacts to settings changes.
 - `content.css`
   - Visual tuning.
-  - Tweak `--fx-contrast-*` variables for background and link colors.
+  - Uses `--fx-contrast-*` variables for background and link colors.
+- `defaults.js`
+  - Shared default values for detection thresholds and colors.
+- `popup/`
+  - Toolbar popup.
+  - Enable toggle and shortcut to detailed settings.
+- `options/`
+  - Detailed settings screen.
+  - Thresholds and colors are editable here.
+- `icons/`
+  - Toolbar / addon icons.
 
 Current default behavior:
 - Adds `data-fx-contrast-mode="light-page"` to the root when at least one large light surface is found.
@@ -21,6 +31,5 @@ Current default behavior:
 - Only those marked surfaces get the darker background and stronger link/hover colors.
 
 Current status:
-- Created only.
+- Has toolbar popup and detailed settings page.
 - Not installed or enabled automatically.
-- Intended for later tuning.

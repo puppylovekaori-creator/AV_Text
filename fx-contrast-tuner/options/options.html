@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <title>FX Contrast Tuner 設定</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <h1>FX Contrast Tuner</h1>
+        <p>白背景ページの検知条件と配色を調整します。</p>
+      </header>
+
+      <form id="settings-form">
+        <section class="card">
+          <h2>基本</h2>
+          <label class="field checkbox">
+            <input id="enabled" name="enabled" type="checkbox">
+            <span>有効にする</span>
+          </label>
+        </section>
+
+        <section class="card">
+          <h2>検知条件</h2>
+          <label class="field">
+            <span>RGB閾値</span>
+            <input id="perChannelThreshold" name="perChannelThreshold" type="number" min="0" max="255" step="1">
+          </label>
+          <label class="field">
+            <span>明度閾値</span>
+            <input id="luminanceThreshold" name="luminanceThreshold" type="number" min="0" max="1" step="0.01">
+          </label>
+          <label class="field">
+            <span>最小面積</span>
+            <input id="minArea" name="minArea" type="number" min="1" max="10000000" step="100">
+          </label>
+          <label class="field">
+            <span>再判定待ち(ms)</span>
+            <input id="debounceMs" name="debounceMs" type="number" min="0" max="5000" step="10">
+          </label>
+        </section>
+
+        <section class="card">
+          <h2>配色</h2>
+          <label class="field">
+            <span>背景</span>
+            <input id="surfaceBg" name="surfaceBg" type="color">
+          </label>
+          <label class="field">
+            <span>本文文字</span>
+            <input id="textColor" name="textColor" type="color">
+          </label>
+          <label class="field">
+            <span>通常リンク</span>
+            <input id="linkColor" name="linkColor" type="color">
+          </label>
+          <label class="field">
+            <span>hoverリンク</span>
+            <input id="linkHoverColor" name="linkHoverColor" type="color">
+          </label>
+          <label class="field">
+            <span>visitedリンク</span>
+            <input id="linkVisitedColor" name="linkVisitedColor" type="color">
+          </label>
+          <label class="field">
+            <span>選択背景</span>
+            <input id="selectionBg" name="selectionBg" type="color">
+          </label>
+        </section>
+
+        <div class="actions">
+          <button id="save-button" type="submit">保存</button>
+          <button id="reset-button" type="button">初期値に戻す</button>
+          <p id="status" class="status" role="status" aria-live="polite"></p>
+        </div>
+      </form>
+    </main>
+    <script src="../defaults.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

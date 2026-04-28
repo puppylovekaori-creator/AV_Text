@@ -1,0 +1,38 @@
+body {
+  margin: 0;
+  background: #f5f1e8;
+  color: #222222;
+  font: 13px/1.45 "Yu Gothic UI", "Meiryo UI", sans-serif;
+}
+
+.panel {
+  width: 220px;
+  padding: 14px;
+}
+
+h1 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status {
+  min-height: 1.4em;
+  margin: 10px 0;
+  color: #0c3f87;
+}
+
+button {
+  width: 100%;
+  border: 1px solid #b9aa8a;
+  background: #fffdfa;
+  color: #222222;
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+}

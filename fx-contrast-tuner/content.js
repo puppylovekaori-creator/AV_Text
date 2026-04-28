@@ -5,28 +5,49 @@
   const ROOT_MODE = "light-page";
   const SURFACE_ATTR = "data-fx-contrast-surface";
   const OWNED_ATTR = "data-fx-contrast-owned";
-
-  const CONFIG = {
-    selectors: [
-      "main",
-      "[role='main']",
-      "article",
-      ".content",
-      ".main",
-      "#content",
-      ".post",
-      ".entry",
-      ".article",
-      "section",
-      "body"
-    ],
-    perChannelThreshold: 236,
-    luminanceThreshold: 0.9,
-    minArea: 16000,
-    debounceMs: 80
-  };
+  const DEFAULTS = globalThis.FX_CONTRAST_DEFAULTS || {};
+  const STORAGE_KEYS = [
+    "enabled",
+    "perChannelThreshold",
+    "luminanceThreshold",
+    "minArea",
+    "debounceMs",
+    "surfaceBg",
+    "textColor",
+    "linkColor",
+    "linkHoverColor",
+    "linkVisitedColor",
+    "selectionBg"
+  ];
 
   let refreshTimer = null;
+  let settings = { ...DEFAULTS };
+
+  function clampNumber(value, min, max, fallback) {
+    const numeric = Number(value);
+    if (Number.isNaN(numeric)) {
+      return fallback;
+    }
+    return Math.min(max, Math.max(min, numeric));
+  }
+
+  function sanitizeSettings(raw) {
+    const source = raw || {};
+    return {
+      ...DEFAULTS,
+      enabled: typeof source.enabled === "boolean" ? source.enabled : DEFAULTS.enabled,
+      perChannelThreshold: clampNumber(source.perChannelThreshold, 0, 255, DEFAULTS.perChannelThreshold),
+      luminanceThreshold: clampNumber(source.luminanceThreshold, 0, 1, DEFAULTS.luminanceThreshold),
+      minArea: clampNumber(source.minArea, 1, 10000000, DEFAULTS.minArea),
+      debounceMs: clampNumber(source.debounceMs, 0, 5000, DEFAULTS.debounceMs),
+      surfaceBg: source.surfaceBg || DEFAULTS.surfaceBg,
+      textColor: source.textColor || DEFAULTS.textColor,
+      linkColor: source.linkColor || DEFAULTS.linkColor,
+      linkHoverColor: source.linkHoverColor || DEFAULTS.linkHoverColor,
+      linkVisitedColor: source.linkVisitedColor || DEFAULTS.linkVisitedColor,
+      selectionBg: source.selectionBg || DEFAULTS.selectionBg
+    };
+  }
 
   function parseRgb(text) {
     if (!text) {
@@ -76,10 +97,10 @@
     return (
       rgb &&
       rgb.a > 0 &&
-      rgb.r >= CONFIG.perChannelThreshold &&
-      rgb.g >= CONFIG.perChannelThreshold &&
-      rgb.b >= CONFIG.perChannelThreshold &&
-      luminance(rgb) >= CONFIG.luminanceThreshold
+      rgb.r >= settings.perChannelThreshold &&
+      rgb.g >= settings.perChannelThreshold &&
+      rgb.b >= settings.perChannelThreshold &&
+      luminance(rgb) >= settings.luminanceThreshold
     );
   }
 
@@ -94,7 +115,7 @@
     }
 
     const rect = element.getBoundingClientRect();
-    return rect.width * rect.height >= CONFIG.minArea;
+    return rect.width * rect.height >= settings.minArea;
   }
 
   function resolveBackgroundColor(element) {
@@ -115,7 +136,7 @@
     const seen = new Set();
     const candidates = [];
 
-    for (const selector of CONFIG.selectors) {
+    for (const selector of DEFAULTS.selectors) {
       for (const element of document.querySelectorAll(selector)) {
         if (!seen.has(element)) {
           seen.add(element);
@@ -136,8 +157,23 @@
     }
   }
 
+  function applyRootVariables() {
+    const rootStyle = document.documentElement.style;
+    rootStyle.setProperty("--fx-contrast-surface-bg", settings.surfaceBg);
+    rootStyle.setProperty("--fx-contrast-text", settings.textColor);
+    rootStyle.setProperty("--fx-contrast-link", settings.linkColor);
+    rootStyle.setProperty("--fx-contrast-link-hover", settings.linkHoverColor);
+    rootStyle.setProperty("--fx-contrast-link-visited", settings.linkVisitedColor);
+    rootStyle.setProperty("--fx-contrast-selection-bg", settings.selectionBg);
+  }
+
   function applyContrastTuning() {
     clearManagedState();
+    applyRootVariables();
+
+    if (!settings.enabled) {
+      return;
+    }
 
     const tuned = [];
 
@@ -169,13 +205,37 @@
     refreshTimer = window.setTimeout(() => {
       refreshTimer = null;
       applyContrastTuning();
-    }, CONFIG.debounceMs);
+    }, settings.debounceMs);
   }
 
-  scheduleRefresh();
+  async function loadSettings() {
+    try {
+      const stored = await browser.storage.local.get(STORAGE_KEYS);
+      settings = sanitizeSettings(stored);
+    } catch (error) {
+      settings = sanitizeSettings({});
+    }
+    scheduleRefresh();
+  }
+
+  loadSettings();
 
   window.addEventListener("load", scheduleRefresh, true);
   window.addEventListener("resize", scheduleRefresh, true);
+  browser.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local") {
+      return;
+    }
+
+    const next = { ...settings };
+    for (const key of STORAGE_KEYS) {
+      if (changes[key]) {
+        next[key] = changes[key].newValue;
+      }
+    }
+    settings = sanitizeSettings(next);
+    scheduleRefresh();
+  });
 
   const observer = new MutationObserver(() => {
     scheduleRefresh();

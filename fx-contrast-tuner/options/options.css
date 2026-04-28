@@ -1,0 +1,107 @@
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, #f7eed7 0, #f5f1e8 36%, #ece6d8 100%);
+  color: #222222;
+  font: 14px/1.5 "Yu Gothic UI", "Meiryo UI", sans-serif;
+}
+
+.page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.hero {
+  margin-bottom: 18px;
+}
+
+.hero h1 {
+  margin: 0 0 6px;
+  font-size: 28px;
+}
+
+.hero p {
+  margin: 0;
+  color: #5f5647;
+}
+
+#settings-form {
+  display: grid;
+  gap: 16px;
+}
+
+.card {
+  background: rgba(255, 253, 248, 0.95);
+  border: 1px solid #d9cfbc;
+  border-radius: 14px;
+  padding: 18px;
+}
+
+.card h2 {
+  margin: 0 0 14px;
+  font-size: 18px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.field:last-child {
+  margin-bottom: 0;
+}
+
+.checkbox {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+input[type="number"],
+input[type="color"] {
+  width: 220px;
+  max-width: 100%;
+}
+
+input[type="number"] {
+  border: 1px solid #cfc3ab;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fffdf9;
+}
+
+input[type="color"] {
+  border: none;
+  background: transparent;
+  height: 40px;
+  padding: 0;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+button {
+  border: 1px solid #af9d7d;
+  background: #fffdfa;
+  color: #222222;
+  border-radius: 8px;
+  padding: 10px 16px;
+  cursor: pointer;
+}
+
+#save-button {
+  background: #0c3f87;
+  border-color: #0c3f87;
+  color: #ffffff;
+}
+
+.status {
+  margin: 0;
+  color: #0c3f87;
+}

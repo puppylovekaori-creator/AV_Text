@@ -1,8 +1,27 @@
 {
   "manifest_version": 3,
   "name": "FX Contrast Tuner",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Detects light page surfaces and applies darker background/link contrast tuning hooks.",
+  "permissions": [
+    "storage"
+  ],
+  "icons": {
+    "16": "icons/fx-contrast-16.svg",
+    "32": "icons/fx-contrast-32.svg"
+  },
+  "action": {
+    "default_title": "FX Contrast Tuner 設定",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/fx-contrast-16.svg",
+      "32": "icons/fx-contrast-32.svg"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
   "host_permissions": [
     "<all_urls>"
   ],
@@ -12,6 +31,7 @@
         "<all_urls>"
       ],
       "js": [
+        "defaults.js",
         "content.js"
       ],
       "css": [
