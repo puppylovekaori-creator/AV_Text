@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <title>AV Text Paster 設定</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="panel">
+      <h1>右クリック位置</h1>
+      <p class="lead">AV Text Paster の出し方を切り替えます。</p>
+      <form id="mode-form">
+        <label class="option">
+          <input type="radio" name="menu-order-mode" value="top">
+          <span>常に上部</span>
+        </label>
+        <label class="option">
+          <input type="radio" name="menu-order-mode" value="near_cursor">
+          <span>カーソルに近い側</span>
+        </label>
+      </form>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <p class="hint">切替後は次の右クリックから反映されます。</p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -39,8 +39,11 @@ TITLE_PATH = OUT_DIR / "title.txt"
 ACTRESS_PATH = OUT_DIR / "actress.txt"
 NO_PATH = OUT_DIR / "no.txt"
 SETTING_INI_PATH = OUT_DIR / "setting.ini"
+MENU_ORDER_MODE_PATH = OUT_DIR / "menu_order_mode.json"
 
 RELOAD_TASK_NAME = "AvText_ReloadTitle_Admin"
+DEFAULT_MENU_ORDER_MODE = "top"
+VALID_MENU_ORDER_MODES = {"top", "near_cursor"}
 
 # ---------- pyodbc ----------
 try:
@@ -110,6 +113,37 @@ def write_first_line(path: Path, text: str) -> None:
     with path.open("w", encoding="utf-8", newline="\n") as f:
         f.write(normalized)
         f.write("\n")
+
+
+def normalize_menu_order_mode(mode: str) -> str:
+    mode = (mode or "").strip()
+    return mode if mode in VALID_MENU_ORDER_MODES else DEFAULT_MENU_ORDER_MODE
+
+
+def read_menu_order_mode() -> str:
+    try:
+        if not MENU_ORDER_MODE_PATH.exists():
+            return DEFAULT_MENU_ORDER_MODE
+        raw = MENU_ORDER_MODE_PATH.read_text(encoding="utf-8").strip()
+        if not raw:
+            return DEFAULT_MENU_ORDER_MODE
+        payload = json.loads(raw)
+        return normalize_menu_order_mode(payload.get("mode", ""))
+    except Exception as e:
+        debug_log(f"[WARN] read_menu_order_mode failed: {e!r}")
+        return DEFAULT_MENU_ORDER_MODE
+
+
+def write_menu_order_mode(mode: str) -> str:
+    normalized = normalize_menu_order_mode(mode)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {"mode": normalized}
+    MENU_ORDER_MODE_PATH.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+        newline="\n",
+    )
+    return normalized
 
 
 def focus_sakura_window() -> str:
@@ -389,6 +423,14 @@ def handle_message(msg: dict) -> dict:
     if target == "focus_sakura":
         res = focus_sakura_window()
         return {"status": "ok", "target": target, "req_id": req_id, "result": res}
+
+    if target == "get_menu_order_mode":
+        mode = read_menu_order_mode()
+        return {"status": "ok", "target": target, "req_id": req_id, "mode": mode}
+
+    if target == "set_menu_order_mode":
+        mode = write_menu_order_mode(text)
+        return {"status": "ok", "target": target, "req_id": req_id, "mode": mode}
 
     if target == "check_actress":
         # ここでは登録しない（クリック登録は register_actress 側）

@@ -10,6 +10,13 @@ const menuItems = [
 
 const menuById = new Map(menuItems.map((item) => [item.id, item]));
 
+async function sendToNative(target, text) {
+  return browser.runtime.sendNativeMessage("avtext_helper", {
+    target,
+    text
+  });
+}
+
 for (const item of menuItems) {
   menus.create({
     id: item.id,
@@ -32,10 +39,7 @@ menus.onClicked.addListener(async (info) => {
   const text = info.selectionText || "";
 
   try {
-    await browser.runtime.sendNativeMessage("avtext_helper", {
-      target,
-      text
-    });
+    await sendToNative(target, text);
   } catch (e) {
     console.error("sendNativeMessage failed:", e);
   }

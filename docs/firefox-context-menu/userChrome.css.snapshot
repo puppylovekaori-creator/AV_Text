@@ -44,20 +44,7 @@
 /****** simpleMenuWizard END ******/
 /**********************************/
 
-/* Custom context-menu ordering */
-#contentAreaContextMenu > :is(menu, menuitem)[label="AV Text Paster"],
-#contentAreaContextMenu > :is(menu, menuitem)[label="サクラエディタを前面に"] {
-  -moz-box-ordinal-group: 0 !important;
-}
-
-#contentAreaContextMenu > #context-copy,
-#contentAreaContextMenu > #context-searchselect,
-#contentAreaContextMenu > menuitem[label^="Google で検索:"],
-#contentAreaContextMenu > menuitem[label^="isear "]
-{
-  -moz-box-ordinal-group: 2 !important;
-}
-
+/* Custom context-menu separator cleanup */
 #contentAreaContextMenu > menuseparator:has(+ :is(menu, menuitem)[label="AV Text Paster"]),
 #contentAreaContextMenu > menuseparator:has(+ :is(menu, menuitem)[label="サクラエディタを前面に"]) {
   display: none !important;

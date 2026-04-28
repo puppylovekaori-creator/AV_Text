@@ -1,0 +1,47 @@
+body {
+  margin: 0;
+  background: #f5f6f8;
+  color: #1f2328;
+  font: 13px/1.45 "Yu Gothic UI", "Meiryo UI", sans-serif;
+}
+
+.panel {
+  width: 260px;
+  padding: 14px;
+}
+
+h1 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.lead,
+.hint,
+.status {
+  margin: 0;
+}
+
+.lead,
+.hint {
+  color: #57606a;
+}
+
+#mode-form {
+  margin: 12px 0;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.status {
+  min-height: 1.4em;
+  color: #0b6bcb;
+}
+
+.status.is-error {
+  color: #b42318;
+}
