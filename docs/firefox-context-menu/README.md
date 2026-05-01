@@ -7,6 +7,8 @@ Files:
   - Summary workbook of the extension, CSS, and AutoConfig work.
 - `mozilla.cfg`
   - AutoConfig script that places `AV Text Paster` / `サクラエディタを前面に` using the current mode.
+  - Lightweight version: no MutationObserver, no repeated timeout chain, no normal log writes, mode is read once at startup.
+  - Self-defense: if move work becomes slow repeatedly, the feature disables itself for the current Firefox session.
 - `local-settings.js`
   - Firefox preference bootstrap for loading `mozilla.cfg`.
 - `install-firefox-autoconfig.ps1`
@@ -19,6 +21,7 @@ Runtime setting:
   - Current context-menu placement mode.
   - `top` keeps the target at the top.
   - `near_cursor` moves the target to the edge nearest the right-click position.
+  - The new mode is read at Firefox startup, so changing it requires a full restart.
 
 Apply step:
 - Re-copy `mozilla.cfg` and `local-settings.js` into `C:\Program Files\Mozilla Firefox` when the mode-switch feature is updated.
