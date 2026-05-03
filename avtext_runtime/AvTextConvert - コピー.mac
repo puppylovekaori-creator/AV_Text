@@ -1,6 +1,6 @@
 FileSave();
 // AV変換バッチ実行
-ExecCommand('python "C:/Users/ジョージ・ブッシュ/AppData/Roaming/sakura/avtext/av_text_convert.py" "$F"', 0);
+ExecCommand('"C:/Users/ジョージ・ブッシュ/AppData/Roaming/sakura/avtext/run_av_text_convert.bat" "$F"', 0);
 
 // 変換先ファイルを開いてフォーカスを移す
 FileOpen('H:\DropBox\Dropbox\40_doc\01.変換\conv_converted.txt');

@@ -1,4 +1,4 @@
-ExecCommand('python "C:/Users/ジョージ・ブッシュ/AppData/Roaming/sakura/avtext/no_title_to_conv.py"',0);
+ExecCommand('"C:/Users/ジョージ・ブッシュ/AppData/Roaming/sakura/avtext/run_no_title_to_conv.bat"',0);
 
 // 変換結果ファイルを開いてフォーカスを移す
 FileOpen("C:/Users/ジョージ・ブッシュ/AppData/Roaming/sakura/avtext/conv_converted.txt");

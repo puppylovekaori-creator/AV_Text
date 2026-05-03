@@ -4,7 +4,7 @@
 FileSaveAll();  // ★未編集扱いに寄せる（外部更新ダイアログ再発を減らす）
 
 // AV変換バッチ実行
-ExecCommand('python "C:/Users/ジョージ・ブッシュ/AppData/Roaming/sakura/avtext/av_text_convert.py"',0);
+ExecCommand('"C:/Users/ジョージ・ブッシュ/AppData/Roaming/sakura/avtext/run_av_text_convert.bat"',0);
 
 // 変換結果ファイルを開いてフォーカスを移す
 FileOpen("C:/Users/ジョージ・ブッシュ/AppData/Roaming/sakura/avtext/conv_converted.txt");
