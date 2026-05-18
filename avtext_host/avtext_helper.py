@@ -7,7 +7,7 @@ target:
   - "actress"         : actress.txt を全置換
   - "actress_with_alias": actress.txt を「選択文字列()」で全置換
   - "no"              : no.txt を全置換
-  - "focus_sakura"    : サクラエディタを最前面＆フォーカス
+  - "focus_sakura"    : AV Text 専用入力エディタを最前面＆フォーカス（互換target名）
   - "check_actress"   : dbo.ACTRESS_DATA の OLD_NAME / NEW_NAME 完全一致で登録済判定
   - "register_actress": 未登録なら dbo.ACTRESS_DATA(OLD_NAME) に自動登録（クリック時のみ想定）
 
@@ -40,6 +40,11 @@ ACTRESS_PATH = OUT_DIR / "actress.txt"
 NO_PATH = OUT_DIR / "no.txt"
 SETTING_INI_PATH = OUT_DIR / "setting.ini"
 MENU_ORDER_MODE_PATH = OUT_DIR / "menu_order_mode.json"
+INPUT_PAD_DIR = OUT_DIR / "avtext_input_pad"
+INPUT_PAD_LAUNCHER = INPUT_PAD_DIR / "Open-AVTextInputPad.cmd"
+INPUT_PAD_SCRIPT = INPUT_PAD_DIR / "avtext_input_pad.pyw"
+INPUT_PAD_WINDOW_TOKEN = "AV Text 専用入力エディタ"
+PYTHON_CHOICE_PATH = OUT_DIR / "avtext_python_choice.txt"
 
 RELOAD_TASK_NAME = "AvText_ReloadTitle_Admin"
 DEFAULT_MENU_ORDER_MODE = "top"
@@ -146,34 +151,9 @@ def write_menu_order_mode(mode: str) -> str:
     return normalized
 
 
-def focus_sakura_window() -> str:
+def _activate_window(hwnd) -> None:
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
-
-    candidates = []
-
-    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    def enum_proc(hwnd, lParam):
-        if not user32.IsWindowVisible(hwnd):
-            return True
-        length = user32.GetWindowTextLengthW(hwnd)
-        if length <= 0:
-            return True
-        buf = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(hwnd, buf, length + 1)
-        title = buf.value or ""
-        t_low = title.lower()
-        if ("sakura" in t_low) or ("サクラ" in title):
-            candidates.append((hwnd, title))
-        return True
-
-    user32.EnumWindows(enum_proc, 0)
-
-    if not candidates:
-        return "NG(no_window)"
-
-    hwnd, title = candidates[0]
-
     SW_RESTORE = 9
     user32.ShowWindow(hwnd, SW_RESTORE)
 
@@ -191,7 +171,6 @@ def focus_sakura_window() -> str:
         user32.SetForegroundWindow(hwnd)
         user32.BringWindowToTop(hwnd)
         user32.SetFocus(hwnd)
-
     finally:
         try:
             if fg_tid:
@@ -200,7 +179,121 @@ def focus_sakura_window() -> str:
         except Exception:
             pass
 
-    return f"OK({title})"
+
+def _find_first_window(match_func):
+    user32 = ctypes.windll.user32
+    candidates = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def enum_proc(hwnd, lParam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return True
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        title = buf.value or ""
+        if match_func(title):
+            candidates.append((hwnd, title))
+            return False
+        return True
+
+    user32.EnumWindows(enum_proc, 0)
+    return candidates[0] if candidates else None
+
+
+def _launch_input_pad() -> bool:
+    try:
+        if INPUT_PAD_SCRIPT.exists():
+            pyw_candidates = []
+
+            try:
+                cached_python = PYTHON_CHOICE_PATH.read_text(encoding="utf-8").strip()
+                if cached_python:
+                    cached_path = Path(cached_python)
+                    pyw_candidates.append(cached_path.with_name("pythonw.exe"))
+            except Exception:
+                pass
+
+            try:
+                current_python = Path(sys.executable)
+                pyw_candidates.append(current_python.with_name("pythonw.exe"))
+            except Exception:
+                pass
+
+            for pyw_path in pyw_candidates:
+                if not pyw_path.exists():
+                    continue
+                creationflags = 0
+                if os.name == "nt":
+                    creationflags = 0x00000008 | 0x08000000
+                subprocess.Popen(
+                    [str(pyw_path), str(INPUT_PAD_SCRIPT)],
+                    cwd=str(INPUT_PAD_DIR),
+                    creationflags=creationflags,
+                    close_fds=True,
+                )
+                debug_log(f"[INFO] launched input pad via pythonw: {pyw_path}")
+                return True
+
+        if INPUT_PAD_LAUNCHER.exists():
+            creationflags = 0
+            if os.name == "nt":
+                creationflags = 0x00000008 | 0x08000000
+            subprocess.Popen(
+                ["cmd.exe", "/c", str(INPUT_PAD_LAUNCHER)],
+                cwd=str(INPUT_PAD_DIR),
+                creationflags=creationflags,
+                close_fds=True,
+            )
+            debug_log(f"[INFO] launched input pad via launcher: {INPUT_PAD_LAUNCHER}")
+            return True
+    except Exception as e:
+        debug_log(f"[WARN] launch_input_pad failed: {e!r}")
+        return False
+
+    debug_log(f"[WARN] input pad launcher not found: {INPUT_PAD_LAUNCHER}")
+    return False
+
+
+def _focus_input_pad_window() -> str:
+    found = _find_first_window(lambda title: INPUT_PAD_WINDOW_TOKEN in (title or ""))
+    if found:
+        hwnd, title = found
+        _activate_window(hwnd)
+        return f"OK(input_pad:{title})"
+
+    if not _launch_input_pad():
+        return "NG(input_pad_launcher_missing)"
+
+    deadline = time.time() + 3.0
+    while time.time() < deadline:
+        time.sleep(0.10)
+        found = _find_first_window(lambda title: INPUT_PAD_WINDOW_TOKEN in (title or ""))
+        if found:
+            hwnd, title = found
+            _activate_window(hwnd)
+            return f"OK(input_pad_started:{title})"
+
+    return "NG(input_pad_window_not_found)"
+
+
+def _focus_existing_sakura_window() -> str:
+    found = _find_first_window(lambda title: ("sakura" in (title or "").lower()) or ("サクラ" in (title or "")))
+    if not found:
+        return "NG(no_sakura_window)"
+    hwnd, title = found
+    _activate_window(hwnd)
+    return f"OK(sakura:{title})"
+
+
+def focus_sakura_window() -> str:
+    result = _focus_input_pad_window()
+    if result.startswith("OK("):
+        return result
+    debug_log(f"[WARN] input pad focus failed, fallback to sakura: {result}")
+    return _focus_existing_sakura_window()
 
 
 # ===================== DB 設定（setting.ini） =====================
