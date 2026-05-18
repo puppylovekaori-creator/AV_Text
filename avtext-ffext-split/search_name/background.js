@@ -93,6 +93,24 @@ browser.runtime.onMessage.addListener((message, sender) => {
     return;
   }
 
+  if (message.type === "check_locate_exists") {
+    const text = message.text || "";
+    const reqId = nextReqId++;
+    pending.set(reqId, { tabId, kind: "check_locate_exists" });
+
+    const ok = postToNative({ target: "check_locate_exists", text, req_id: reqId });
+    if (!ok) {
+      pending.delete(reqId);
+      browser.tabs.sendMessage(tabId, {
+        type: "native_result",
+        kind: "check_locate_exists",
+        req_id: reqId,
+        payload: { status: "error", target: "check_locate_exists", req_id: reqId, error: "native host not available" }
+      }).catch(() => {});
+    }
+    return;
+  }
+
   if (message.type === "register_actress") {
     const text = message.text || "";
     const reqId = nextReqId++;

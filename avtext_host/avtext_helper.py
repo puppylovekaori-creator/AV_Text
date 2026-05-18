@@ -9,6 +9,7 @@ target:
   - "no"              : no.txt を全置換
   - "focus_sakura"    : AV Text 専用入力エディタを最前面＆フォーカス（互換target名）
   - "check_actress"   : dbo.ACTRESS_DATA の OLD_NAME / NEW_NAME 完全一致で登録済判定
+  - "check_locate_exists": Locate32 DB に一致が1件でもあるか判定
   - "register_actress": 未登録なら dbo.ACTRESS_DATA(OLD_NAME) に自動登録（クリック時のみ想定）
 
 保存先:
@@ -27,8 +28,10 @@ import time
 import configparser
 from pathlib import Path
 from datetime import datetime
+from collections import OrderedDict
 import ctypes
 from ctypes import wintypes
+import winreg
 
 # ---------- パス（配置フォルダ基準） ----------
 HOST_DIR = Path(__file__).resolve().parent
@@ -51,6 +54,14 @@ PYTHON_CHOICE_PATH = OUT_DIR / "avtext_python_choice.txt"
 RELOAD_TASK_NAME = "AvText_ReloadTitle_Admin"
 DEFAULT_MENU_ORDER_MODE = "top"
 VALID_MENU_ORDER_MODES = {"top", "near_cursor"}
+LOCATE_EXE_CANDIDATES = (
+    Path(r"C:\Program Files (x86)\locate32_x64\locate.exe"),
+)
+LOCATE_DB_REG_PATH = r"Software\Update\Databases\1_default"
+LOCATE_DB_REG_VALUE = "ArchiveName"
+LOCATE_QUERY_TIMEOUT_SEC = 3.0
+LOCATE_QUERY_CACHE_MAX = 256
+LOCATE_QUERY_CACHE: "OrderedDict[tuple[str, str, int, int], bool]" = OrderedDict()
 
 # ---------- pyodbc ----------
 try:
@@ -520,6 +531,86 @@ def get_db_connection():
     raise RuntimeError(f"All DB connect attempts failed: {last_err!r}")
 
 
+def _get_locate_exe_path() -> Path:
+    for candidate in LOCATE_EXE_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    raise RuntimeError("Locate32 executable not found")
+
+
+def _get_locate_db_path() -> Path:
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, LOCATE_DB_REG_PATH) as key:
+            value, _value_type = winreg.QueryValueEx(key, LOCATE_DB_REG_VALUE)
+    except FileNotFoundError as e:
+        raise RuntimeError(f"Locate32 DB registry key not found: {LOCATE_DB_REG_PATH}") from e
+    except OSError as e:
+        raise RuntimeError(f"Locate32 DB registry read failed: {e}") from e
+
+    db_path = Path(str(value).strip())
+    if not db_path.exists():
+        raise RuntimeError(f"Locate32 DB file not found: {db_path}")
+    return db_path
+
+
+def _get_locate_cache_key(query: str, db_path: Path) -> tuple[str, str, int, int]:
+    stat = db_path.stat()
+    return (query.casefold(), str(db_path), int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def _get_cached_locate_result(cache_key: tuple[str, str, int, int]):
+    if cache_key not in LOCATE_QUERY_CACHE:
+        return None
+    found = LOCATE_QUERY_CACHE.pop(cache_key)
+    LOCATE_QUERY_CACHE[cache_key] = found
+    return found
+
+
+def _store_locate_result(cache_key: tuple[str, str, int, int], found: bool) -> None:
+    LOCATE_QUERY_CACHE[cache_key] = found
+    while len(LOCATE_QUERY_CACHE) > LOCATE_QUERY_CACHE_MAX:
+        LOCATE_QUERY_CACHE.popitem(last=False)
+
+
+def _check_locate_exists(query: str) -> bool:
+    query = (query or "").strip()
+    if not query:
+        return False
+
+    locate_exe = _get_locate_exe_path()
+    db_path = _get_locate_db_path()
+    cache_key = _get_locate_cache_key(query, db_path)
+    cached = _get_cached_locate_result(cache_key)
+    if cached is not None:
+        return cached
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    start = time.perf_counter()
+    completed = subprocess.run(
+        [str(locate_exe), "-d", str(db_path), "-ln:1", "--", query],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=LOCATE_QUERY_TIMEOUT_SEC,
+        creationflags=creationflags,
+    )
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+
+    if completed.returncode not in (0, 1) and completed.stderr.strip():
+        raise RuntimeError(f"Locate32 query failed: {completed.stderr.strip()}")
+
+    found = any(line.strip() for line in completed.stdout.splitlines())
+    _store_locate_result(cache_key, found)
+    debug_log(
+        f"[INFO] check_locate_exists query={query!r} found={found} elapsed_ms={elapsed_ms:.3f} db={db_path}"
+    )
+    return found
+
+
 def _build_display_name(name: str, rows) -> str:
     name = (name or "").strip()
     best_display = name
@@ -679,6 +770,20 @@ def handle_message(msg: dict) -> dict:
             }
         except Exception as e:
             debug_log(f"[WARN] check_actress failed: {e!r}")
+            return {"status": "error", "target": target, "req_id": req_id, "error": str(e)}
+
+    if target == "check_locate_exists":
+        try:
+            debug_log("[INFO] check_locate_exists start")
+            found = _check_locate_exists(text)
+            return {
+                "status": "ok",
+                "target": target,
+                "req_id": req_id,
+                "found": bool(found),
+            }
+        except Exception as e:
+            debug_log(f"[WARN] check_locate_exists failed: {e!r}")
             return {"status": "error", "target": target, "req_id": req_id, "error": str(e)}
 
     if target == "register_actress":

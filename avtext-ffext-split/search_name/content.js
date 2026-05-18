@@ -5,6 +5,8 @@
 const MAX_LEN = 12;          // ユーザー要望：とりあえず12文字
 const DEBOUNCE_MS = 120;     // 体感即時寄り
 const OVERLAY_Z = 2147483647;
+const ASCII_PRINTABLE_PATTERN = /^[\x21-\x7E]+$/;
+const ASCII_ALNUM_PATTERN = /[A-Za-z0-9]/;
 
 let overlay = null;
 let overlayText = null;
@@ -16,6 +18,7 @@ let debounceTimer = null;
 
 // 表示中の対象名（クリック登録の誤爆防止）
 let currentName = "";
+let currentCheckKind = "";
 
 // 直近 req_id（古い返事で上書きしないため）
 let lastReqIdCheck = 0;
@@ -63,7 +66,7 @@ function makeOverlay() {
   overlayBtn.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!currentName) return;
+    if (!currentName || currentCheckKind !== "check_actress") return;
     showLoading(`登録中: ${currentName}`);
     browser.runtime.sendMessage({ type: "register_actress", text: currentName }).catch(() => {});
   }, true);
@@ -78,6 +81,7 @@ function hideOverlay() {
   overlay.style.display = "none";
   overlayBtn.style.display = "none";
   currentName = "";
+  currentCheckKind = "";
 }
 
 function showOverlayAt(rect) {
@@ -115,14 +119,25 @@ function showLoading(label) {
   overlayBtn.style.display = "none";
 }
 
-function showRegistered(name) {
-  setOverlayText(`登録済: ${name}`);
+function showRegistered(name, hasAlias = false) {
+  const label = hasAlias ? "登録済み(別名あり)" : "登録済";
+  setOverlayText(`${label}: ${name}`);
   overlayBtn.style.display = "none";
 }
 
 function showUnregistered(name) {
   setOverlayText(`未登録: ${name}`);
   overlayBtn.style.display = "inline-block";
+}
+
+function showLocateFound(text) {
+  setOverlayText(`ファイルあり: ${text}`);
+  overlayBtn.style.display = "none";
+}
+
+function showLocateMissing(text) {
+  setOverlayText(`ファイルなし: ${text}`);
+  overlayBtn.style.display = "none";
 }
 
 function getSelectionRect() {
@@ -138,7 +153,7 @@ function getSelectionRect() {
   return rect;
 }
 
-function cleanSelectedText(raw) {
+function normalizeSelectedText(raw) {
   if (!raw) return "";
 
   // 前後空白（半角/全角）除去
@@ -153,9 +168,26 @@ function cleanSelectedText(raw) {
   if (/[ \t\r\n\u3000]/.test(s)) return "";
 
   if (s.length === 0) return "";
-  if (s.length > MAX_LEN) return "";
-
   return s;
+}
+
+function isLocateCodeText(text) {
+  return ASCII_PRINTABLE_PATTERN.test(text) && ASCII_ALNUM_PATTERN.test(text);
+}
+
+function classifySelectedText(raw) {
+  const text = normalizeSelectedText(raw);
+  if (!text) return null;
+
+  if (isLocateCodeText(text)) {
+    return { text, kind: "check_locate_exists" };
+  }
+
+  if (text.length > MAX_LEN) {
+    return { text, kind: "check_locate_exists" };
+  }
+
+  return { text, kind: "check_actress" };
 }
 
 function scheduleCheck() {
@@ -168,9 +200,9 @@ function runCheckNow() {
 
   const sel = window.getSelection();
   const raw = sel ? String(sel.toString() || "") : "";
-  const cleaned = cleanSelectedText(raw);
+  const classified = classifySelectedText(raw);
 
-  if (!cleaned) {
+  if (!classified) {
     hideOverlay();
     lastSentText = "";
     lastSelectionKey = "";
@@ -183,15 +215,16 @@ function runCheckNow() {
   showOverlayAt(rect);
 
   // 同じ選択に対して連打しない
-  const key = `${cleaned}|${Math.round(rect.left)}|${Math.round(rect.top)}|${Math.round(rect.width)}|${Math.round(rect.height)}`;
+  const key = `${classified.kind}|${classified.text}|${Math.round(rect.left)}|${Math.round(rect.top)}|${Math.round(rect.width)}|${Math.round(rect.height)}`;
   if (key === lastSelectionKey) return;
 
   lastSelectionKey = key;
-  currentName = cleaned;
-  showLoading("判定中...");
+  currentName = classified.text;
+  currentCheckKind = classified.kind;
+  showLoading(classified.kind === "check_locate_exists" ? "ファイル確認中..." : "判定中...");
 
-  lastSentText = cleaned;
-  browser.runtime.sendMessage({ type: "check_actress", text: cleaned }).catch(() => {});
+  lastSentText = classified.text;
+  browser.runtime.sendMessage({ type: classified.kind, text: classified.text }).catch(() => {});
 }
 
 document.addEventListener("selectionchange", () => {
@@ -213,7 +246,7 @@ browser.runtime.onMessage.addListener((message) => {
   if (kind === "check_actress") {
     // 古い返事で上書きしない（background 側で req_id は振っているが content 側は見えない）
     // なので currentName と一致しない返事は捨てる
-    if (!currentName) return;
+    if (!currentName || currentCheckKind !== "check_actress") return;
 
     if (payload.status !== "ok") {
       setOverlayText(`判定失敗: ${currentName}`);
@@ -222,13 +255,29 @@ browser.runtime.onMessage.addListener((message) => {
     }
 
     const found = !!payload.found;
-    if (found) showRegistered(currentName);
+    const hasAlias = !!payload.has_alias;
+    const displayName = payload.display_name || currentName;
+    if (found) showRegistered(displayName, hasAlias);
     else showUnregistered(currentName);
     return;
   }
 
+  if (kind === "check_locate_exists") {
+    if (!currentName || currentCheckKind !== "check_locate_exists") return;
+
+    if (payload.status !== "ok") {
+      setOverlayText(`確認失敗: ${currentName}`);
+      overlayBtn.style.display = "none";
+      return;
+    }
+
+    if (payload.found) showLocateFound(currentName);
+    else showLocateMissing(currentName);
+    return;
+  }
+
   if (kind === "register_actress") {
-    if (!currentName) return;
+    if (!currentName || currentCheckKind !== "check_actress") return;
 
     if (payload.status !== "ok") {
       setOverlayText(`登録失敗: ${currentName}`);
@@ -238,13 +287,13 @@ browser.runtime.onMessage.addListener((message) => {
 
     // registered=true なら即表示更新
     if (payload.registered === true) {
-      showRegistered(currentName);
+      showRegistered(payload.display_name || currentName, !!payload.has_alias);
       return;
     }
 
     // 既に存在していた等
     if (payload.already_exists === true) {
-      showRegistered(currentName);
+      showRegistered(payload.display_name || currentName, !!payload.has_alias);
       return;
     }
 
