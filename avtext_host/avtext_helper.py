@@ -151,11 +151,94 @@ def write_menu_order_mode(mode: str) -> str:
     return normalized
 
 
-def _activate_window(hwnd) -> None:
+def _activate_window(hwnd, force_cursor_monitor: bool = False) -> None:
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
+    MONITOR_DEFAULTTONULL = 0
+    MONITOR_DEFAULTTONEAREST = 2
+    SWP_NOZORDER = 0x0004
+    SWP_NOACTIVATE = 0x0010
+    SWP_NOSIZE = 0x0001
+
+    class POINT(ctypes.Structure):
+        _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("rcMonitor", wintypes.RECT),
+            ("rcWork", wintypes.RECT),
+            ("dwFlags", wintypes.DWORD),
+        ]
+
+    def _move_window_if_offscreen(target_hwnd) -> None:
+        monitor = user32.MonitorFromWindow(target_hwnd, MONITOR_DEFAULTTONULL)
+        if monitor:
+            return
+
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(target_hwnd, ctypes.byref(rect)):
+            return
+
+        width = max(320, rect.right - rect.left)
+        height = max(180, rect.bottom - rect.top)
+        screen_w = user32.GetSystemMetrics(0)
+        screen_h = user32.GetSystemMetrics(1)
+        new_x = max(0, (screen_w - width) // 2)
+        new_y = max(0, (screen_h - height) // 2)
+        user32.SetWindowPos(
+            target_hwnd,
+            0,
+            new_x,
+            new_y,
+            0,
+            0,
+            SWP_NOZORDER | SWP_NOACTIVATE,
+        )
+
+    def _move_window_to_cursor_monitor(target_hwnd) -> None:
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(target_hwnd, ctypes.byref(rect)):
+            return
+
+        width = max(320, rect.right - rect.left)
+        height = max(180, rect.bottom - rect.top)
+
+        pt = POINT()
+        if not user32.GetCursorPos(ctypes.byref(pt)):
+            return
+
+        monitor = user32.MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST)
+        if not monitor:
+            return
+
+        info = MONITORINFO()
+        info.cbSize = ctypes.sizeof(MONITORINFO)
+        if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return
+
+        work = info.rcWork
+        work_width = max(320, work.right - work.left)
+        work_height = max(180, work.bottom - work.top)
+        new_x = work.left + max(0, (work_width - width) // 2)
+        new_y = work.top + max(0, (work_height - height) // 2)
+
+        user32.SetWindowPos(
+            target_hwnd,
+            0,
+            new_x,
+            new_y,
+            0,
+            0,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE,
+        )
+
     SW_RESTORE = 9
     user32.ShowWindow(hwnd, SW_RESTORE)
+    if force_cursor_monitor:
+        _move_window_to_cursor_monitor(hwnd)
+    else:
+        _move_window_if_offscreen(hwnd)
 
     try:
         fg = user32.GetForegroundWindow()
@@ -261,7 +344,7 @@ def _focus_input_pad_window() -> str:
     found = _find_first_window(lambda title: INPUT_PAD_WINDOW_TOKEN in (title or ""))
     if found:
         hwnd, title = found
-        _activate_window(hwnd)
+        _activate_window(hwnd, force_cursor_monitor=True)
         return f"OK(input_pad:{title})"
 
     if not _launch_input_pad():
@@ -273,7 +356,7 @@ def _focus_input_pad_window() -> str:
         found = _find_first_window(lambda title: INPUT_PAD_WINDOW_TOKEN in (title or ""))
         if found:
             hwnd, title = found
-            _activate_window(hwnd)
+            _activate_window(hwnd, force_cursor_monitor=True)
             return f"OK(input_pad_started:{title})"
 
     return "NG(input_pad_window_not_found)"

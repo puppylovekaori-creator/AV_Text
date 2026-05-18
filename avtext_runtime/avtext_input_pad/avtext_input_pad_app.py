@@ -314,6 +314,43 @@ def normalize_window_geometry(geometry: str, fallback: str = DEFAULT_WINDOW_GEOM
     return geometry
 
 
+def get_cursor_work_area() -> tuple[int, int, int, int]:
+    if os.name != "nt":
+        return (0, 0, 1920, 1080)
+
+    import ctypes
+    from ctypes import wintypes
+
+    class POINT(ctypes.Structure):
+        _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("rcMonitor", wintypes.RECT),
+            ("rcWork", wintypes.RECT),
+            ("dwFlags", wintypes.DWORD),
+        ]
+
+    user32 = ctypes.windll.user32
+    MONITOR_DEFAULTTONEAREST = 2
+    pt = POINT()
+    if not user32.GetCursorPos(ctypes.byref(pt)):
+        return (0, 0, 1920, 1080)
+
+    monitor = user32.MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST)
+    if not monitor:
+        return (0, 0, 1920, 1080)
+
+    info = MONITORINFO()
+    info.cbSize = ctypes.sizeof(MONITORINFO)
+    if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+        return (0, 0, 1920, 1080)
+
+    work = info.rcWork
+    return (work.left, work.top, work.right, work.bottom)
+
+
 class AvTextInputPadApp:
     def __init__(self, root: tk.Tk, settings_store: SettingsStore, logger: SimpleLogger):
         self.root = root
@@ -458,6 +495,7 @@ class AvTextInputPadApp:
         self.result_widget = ScrolledText(result_tab, wrap="word", undo=False, height=8)
         self.result_widget.grid(row=0, column=0, sticky="nsew")
         self.result_widget.configure(state="disabled")
+        self.root.after(0, self.ensure_window_on_screen)
 
     def _bind_events(self) -> None:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -521,6 +559,30 @@ class AvTextInputPadApp:
         except Exception:
             pass
         self.settings_store.save(self.settings)
+
+    def ensure_window_on_screen(self) -> None:
+        try:
+            self.root.update_idletasks()
+            width = max(MIN_WINDOW_WIDTH, min(MAX_WINDOW_WIDTH, self.root.winfo_width()))
+            height = max(MIN_WINDOW_HEIGHT, min(MAX_WINDOW_HEIGHT, self.root.winfo_height()))
+            x = self.root.winfo_rootx()
+            y = self.root.winfo_rooty()
+            left, top, right, bottom = get_cursor_work_area()
+            visible_margin = 80
+
+            fits_horizontally = (x + visible_margin) < right and (x + width - visible_margin) > left
+            fits_vertically = (y + visible_margin) < bottom and (y + height - visible_margin) > top
+            if fits_horizontally and fits_vertically:
+                return
+
+            work_width = max(width, right - left)
+            work_height = max(height, bottom - top)
+            new_x = left + max(0, (work_width - width) // 2)
+            new_y = top + max(0, (work_height - height) // 2)
+            self.root.geometry(f"{width}x{height}+{new_x}+{new_y}")
+            self.root.update_idletasks()
+        except Exception as exc:
+            self.logger.log(f"window normalize skipped: {exc!r}")
 
     def select_tab(self, name: str) -> None:
         if self.main_notebook is None:
