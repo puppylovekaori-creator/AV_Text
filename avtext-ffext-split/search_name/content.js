@@ -140,8 +140,16 @@ function showUnregistered(name) {
   overlayBtn.style.display = "inline-block";
 }
 
+function getLeafName(pathText) {
+  const normalized = String(pathText || "").trim();
+  if (!normalized) return "";
+  const parts = normalized.split(/[\\/]/);
+  return parts.length > 0 ? (parts[parts.length - 1] || "") : normalized;
+}
+
 function showLocateFound(text, count, firstResult) {
-  setOverlayText(`ファイルあり(${count}): ${text}`);
+  const fileName = getLeafName(firstResult) || text;
+  setOverlayText(`${fileName} (${count})`);
   setOverlayTooltip(firstResult || "");
   overlayBtn.style.display = "none";
 }
