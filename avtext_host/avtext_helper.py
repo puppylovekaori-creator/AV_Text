@@ -153,7 +153,7 @@ def write_menu_order_mode(mode: str) -> str:
     return normalized
 
 
-def _activate_window(hwnd, force_cursor_monitor: bool = False) -> None:
+def _activate_window(hwnd, force_cursor_monitor: bool = False, move_cursor_to_action: bool = False) -> None:
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
     MONITOR_DEFAULTTONULL = 0
@@ -172,6 +172,25 @@ def _activate_window(hwnd, force_cursor_monitor: bool = False) -> None:
             ("rcWork", wintypes.RECT),
             ("dwFlags", wintypes.DWORD),
         ]
+
+    def _move_cursor_to_input_pad_action(target_hwnd) -> None:
+        client = wintypes.RECT()
+        if not user32.GetClientRect(target_hwnd, ctypes.byref(client)):
+            return
+
+        client_width = max(1, client.right - client.left)
+        client_height = max(1, client.bottom - client.top)
+
+        class CLIENTPOINT(ctypes.Structure):
+            _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+        top_left = CLIENTPOINT(0, 0)
+        if not user32.ClientToScreen(target_hwnd, ctypes.byref(top_left)):
+            return
+
+        target_x = top_left.x + min(max(42, client_width // 18), 90)
+        target_y = top_left.y + max(20, client_height - 20)
+        user32.SetCursorPos(int(target_x), int(target_y))
 
     def _move_window_if_offscreen(target_hwnd) -> None:
         monitor = user32.MonitorFromWindow(target_hwnd, MONITOR_DEFAULTTONULL)
@@ -256,6 +275,8 @@ def _activate_window(hwnd, force_cursor_monitor: bool = False) -> None:
         user32.SetForegroundWindow(hwnd)
         user32.BringWindowToTop(hwnd)
         user32.SetFocus(hwnd)
+        if move_cursor_to_action:
+            _move_cursor_to_input_pad_action(hwnd)
     finally:
         try:
             if fg_tid:
@@ -376,7 +397,7 @@ def _focus_input_pad_window() -> str:
     found = _find_first_window(lambda title: INPUT_PAD_WINDOW_TOKEN in (title or ""))
     if found:
         hwnd, title = found
-        _activate_window(hwnd, force_cursor_monitor=True)
+        _activate_window(hwnd, force_cursor_monitor=True, move_cursor_to_action=True)
         return f"OK(input_pad:{title})"
 
     if not _launch_input_pad():
@@ -388,7 +409,7 @@ def _focus_input_pad_window() -> str:
         found = _find_first_window(lambda title: INPUT_PAD_WINDOW_TOKEN in (title or ""))
         if found:
             hwnd, title = found
-            _activate_window(hwnd, force_cursor_monitor=True)
+            _activate_window(hwnd, force_cursor_monitor=True, move_cursor_to_action=True)
             return f"OK(input_pad_started:{title})"
 
     return "NG(input_pad_window_not_found)"
