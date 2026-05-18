@@ -736,6 +736,15 @@ class AvTextInputPadApp:
             return
         self.main_notebook.select(frame)
 
+    def focus_copy_button(self) -> None:
+        button = self.button_map.get("copy")
+        if button is None:
+            return
+        try:
+            button.focus_set()
+        except Exception as exc:
+            self.logger.log(f"[WARN] focus copy button failed: {exc!r}")
+
     def set_status(self, status: str, detail: str, *, busy: bool = False, error: bool = False) -> None:
         self.status_var.set(status)
         self.detail_var.set(detail)
@@ -979,6 +988,7 @@ class AvTextInputPadApp:
                 self.set_status("完了", detail, busy=False)
                 self.set_notice(shorten_detail(stdout) if stdout else "")
                 self.select_tab("result")
+                self.focus_copy_button()
             else:
                 combined = stdout.strip() or stderr.strip() or f"exit={returncode}"
                 detail = f"{MODE_SPECS[mode]['label']} 失敗"
@@ -1189,6 +1199,17 @@ class SmokeTestRunner:
             return False
         return True
 
+    def check_copy_button_focus(self, mode: str) -> bool:
+        copy_button = self.app.button_map.get("copy")
+        if copy_button is None:
+            self.fail(f"{mode} copy button missing")
+            return False
+        focused = self.root.focus_get()
+        if focused != copy_button:
+            self.fail(f"{mode} copy focus missing")
+            return False
+        return True
+
     def check_notice_text(self, mode: str) -> bool:
         notice = self.app.notice_var.get().strip()
         if not notice:
@@ -1205,6 +1226,8 @@ class SmokeTestRunner:
     def check_title_and_actress(self) -> None:
         if not self.check_result_updated("title_and_actress"):
             return
+        if not self.check_copy_button_focus("title_and_actress"):
+            return
         if not self.check_notice_text("title_and_actress"):
             return
         self.start_conversion_and_wait("title_only", self.check_title_only)
@@ -1212,12 +1235,16 @@ class SmokeTestRunner:
     def check_title_only(self) -> None:
         if not self.check_result_updated("title_only"):
             return
+        if not self.check_copy_button_focus("title_only"):
+            return
         if not self.check_notice_text("title_only"):
             return
         self.start_conversion_and_wait("no_title", self.check_no_title)
 
     def check_no_title(self) -> None:
         if not self.check_result_updated("no_title"):
+            return
+        if not self.check_copy_button_focus("no_title"):
             return
         if not self.check_notice_text("no_title"):
             return
