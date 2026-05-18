@@ -3,6 +3,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 
 set "BASE_DIR=%~dp0"
 set "TRACE=%BASE_DIR%avtext_python_trace.log"
+set "CACHE=%BASE_DIR%avtext_python_choice.txt"
 set "TARGET=%~f1"
 
 if "%~1"=="" (
@@ -29,7 +30,19 @@ pushd "%BASE_DIR%"
 set "PY_EXE="
 set "PY_ARGS="
 
-if exist "%BASE_DIR%venv\Scripts\python.exe" (
+if exist "%CACHE%" (
+  set /p PY_CACHE_EXE=<"%CACHE%"
+  if defined PY_CACHE_EXE (
+    if exist "!PY_CACHE_EXE!" (
+      set "PY_EXE=!PY_CACHE_EXE!"
+    ) else (
+      del /q "%CACHE%" >nul 2>&1
+      >> "%TRACE%" echo [WARN] cached python missing. cache cleared: !PY_CACHE_EXE!
+    )
+  )
+)
+
+if not defined PY_EXE if exist "%BASE_DIR%venv\Scripts\python.exe" (
   call :try_python "%BASE_DIR%venv\Scripts\python.exe" ""
 )
 
@@ -49,15 +62,16 @@ if not defined PY_EXE (
   set "PY_EXE=python"
 )
 
->> "%TRACE%" echo ============================================================
->> "%TRACE%" echo [RUN] %date% %time%
->> "%TRACE%" echo [RUN] target=%TARGET%
->> "%TRACE%" echo [RUN] python=%PY_EXE% %PY_ARGS%
-
 "%PY_EXE%" %PY_ARGS% -u "%TARGET%" %PASS_ARGS%
 set "RC=%ERRORLEVEL%"
 
->> "%TRACE%" echo [RUN] exit=%RC%
+if not "%RC%"=="0" (
+  >> "%TRACE%" echo ============================================================
+  >> "%TRACE%" echo [RUN] %date% %time%
+  >> "%TRACE%" echo [RUN] target=%TARGET%
+  >> "%TRACE%" echo [RUN] python=%PY_EXE% %PY_ARGS%
+  >> "%TRACE%" echo [RUN] exit=%RC%
+)
 popd
 exit /b %RC%
 
