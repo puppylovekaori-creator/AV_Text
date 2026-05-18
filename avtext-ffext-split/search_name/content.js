@@ -114,29 +114,41 @@ function setOverlayText(text) {
   overlayText.textContent = text;
 }
 
+function setOverlayTooltip(text) {
+  makeOverlay();
+  const value = text || "";
+  overlay.title = value;
+  overlayText.title = value;
+}
+
 function showLoading(label) {
   setOverlayText(label || "判定中...");
+  setOverlayTooltip("");
   overlayBtn.style.display = "none";
 }
 
 function showRegistered(name, hasAlias = false) {
   const label = hasAlias ? "登録済み(別名あり)" : "登録済";
   setOverlayText(`${label}: ${name}`);
+  setOverlayTooltip("");
   overlayBtn.style.display = "none";
 }
 
 function showUnregistered(name) {
   setOverlayText(`未登録: ${name}`);
+  setOverlayTooltip("");
   overlayBtn.style.display = "inline-block";
 }
 
-function showLocateFound(text) {
-  setOverlayText(`ファイルあり: ${text}`);
+function showLocateFound(text, count, firstResult) {
+  setOverlayText(`ファイルあり(${count}): ${text}`);
+  setOverlayTooltip(firstResult || "");
   overlayBtn.style.display = "none";
 }
 
-function showLocateMissing(text) {
-  setOverlayText(`ファイルなし: ${text}`);
+function showLocateMissing(text, count = 0) {
+  setOverlayText(`ファイルなし(${count}): ${text}`);
+  setOverlayTooltip("");
   overlayBtn.style.display = "none";
 }
 
@@ -250,6 +262,7 @@ browser.runtime.onMessage.addListener((message) => {
 
     if (payload.status !== "ok") {
       setOverlayText(`判定失敗: ${currentName}`);
+      setOverlayTooltip("");
       overlayBtn.style.display = "none";
       return;
     }
@@ -267,12 +280,14 @@ browser.runtime.onMessage.addListener((message) => {
 
     if (payload.status !== "ok") {
       setOverlayText(`確認失敗: ${currentName}`);
+      setOverlayTooltip("");
       overlayBtn.style.display = "none";
       return;
     }
 
-    if (payload.found) showLocateFound(currentName);
-    else showLocateMissing(currentName);
+    const count = Number.isFinite(payload.count) ? payload.count : (payload.found ? 1 : 0);
+    if (payload.found) showLocateFound(currentName, count, payload.first_result || "");
+    else showLocateMissing(currentName, count);
     return;
   }
 
@@ -281,6 +296,7 @@ browser.runtime.onMessage.addListener((message) => {
 
     if (payload.status !== "ok") {
       setOverlayText(`登録失敗: ${currentName}`);
+      setOverlayTooltip("");
       overlayBtn.style.display = "none";
       return;
     }

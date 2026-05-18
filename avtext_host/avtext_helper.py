@@ -59,9 +59,9 @@ LOCATE_EXE_CANDIDATES = (
 )
 LOCATE_DB_REG_PATH = r"Software\Update\Databases\1_default"
 LOCATE_DB_REG_VALUE = "ArchiveName"
-LOCATE_QUERY_TIMEOUT_SEC = 3.0
+LOCATE_QUERY_TIMEOUT_SEC = 8.0
 LOCATE_QUERY_CACHE_MAX = 256
-LOCATE_QUERY_CACHE: "OrderedDict[tuple[str, str, int, int], bool]" = OrderedDict()
+LOCATE_QUERY_CACHE: "OrderedDict[tuple[str, str, int, int], tuple[bool, int, str]]" = OrderedDict()
 
 # ---------- pyodbc ----------
 try:
@@ -561,21 +561,26 @@ def _get_locate_cache_key(query: str, db_path: Path) -> tuple[str, str, int, int
 def _get_cached_locate_result(cache_key: tuple[str, str, int, int]):
     if cache_key not in LOCATE_QUERY_CACHE:
         return None
-    found = LOCATE_QUERY_CACHE.pop(cache_key)
-    LOCATE_QUERY_CACHE[cache_key] = found
-    return found
+    cached_value = LOCATE_QUERY_CACHE.pop(cache_key)
+    LOCATE_QUERY_CACHE[cache_key] = cached_value
+    return cached_value
 
 
-def _store_locate_result(cache_key: tuple[str, str, int, int], found: bool) -> None:
-    LOCATE_QUERY_CACHE[cache_key] = found
+def _store_locate_result(
+    cache_key: tuple[str, str, int, int],
+    found: bool,
+    count: int,
+    first_result: str,
+) -> None:
+    LOCATE_QUERY_CACHE[cache_key] = (found, count, first_result)
     while len(LOCATE_QUERY_CACHE) > LOCATE_QUERY_CACHE_MAX:
         LOCATE_QUERY_CACHE.popitem(last=False)
 
 
-def _check_locate_exists(query: str) -> bool:
+def _check_locate_exists(query: str) -> tuple[bool, int, str]:
     query = (query or "").strip()
     if not query:
-        return False
+        return False, 0, ""
 
     locate_exe = _get_locate_exe_path()
     db_path = _get_locate_db_path()
@@ -589,26 +594,64 @@ def _check_locate_exists(query: str) -> bool:
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
     start = time.perf_counter()
-    completed = subprocess.run(
-        [str(locate_exe), "-d", str(db_path), "-ln:1", "--", query],
-        capture_output=True,
+    process = subprocess.Popen(
+        [str(locate_exe), "-d", str(db_path), "--", query],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=LOCATE_QUERY_TIMEOUT_SEC,
         creationflags=creationflags,
     )
+    deadline = start + LOCATE_QUERY_TIMEOUT_SEC
+    count = 0
+    first_result = ""
+
+    try:
+        while True:
+            if process.stdout is None:
+                break
+
+            line = process.stdout.readline()
+            if line:
+                stripped = line.strip()
+                if stripped:
+                    count += 1
+                    if not first_result:
+                        first_result = stripped
+                continue
+
+            if process.poll() is not None:
+                break
+
+            if time.perf_counter() >= deadline:
+                process.kill()
+                _stdout_tail, stderr_tail = process.communicate(timeout=1.0)
+                raise RuntimeError(
+                    f"Locate32 query timed out after {LOCATE_QUERY_TIMEOUT_SEC:.1f}s"
+                    + (f": {stderr_tail.strip()}" if stderr_tail and stderr_tail.strip() else "")
+                )
+
+            time.sleep(0.01)
+
+        stderr_text = process.stderr.read() if process.stderr is not None else ""
+        returncode = process.wait(timeout=1.0)
+    except subprocess.TimeoutExpired as e:
+        process.kill()
+        raise RuntimeError("Locate32 query cleanup timed out") from e
+
     elapsed_ms = (time.perf_counter() - start) * 1000.0
 
-    if completed.returncode not in (0, 1) and completed.stderr.strip():
-        raise RuntimeError(f"Locate32 query failed: {completed.stderr.strip()}")
+    if returncode not in (0, 1) and stderr_text.strip():
+        raise RuntimeError(f"Locate32 query failed: {stderr_text.strip()}")
 
-    found = any(line.strip() for line in completed.stdout.splitlines())
-    _store_locate_result(cache_key, found)
+    found = count > 0
+    _store_locate_result(cache_key, found, count, first_result)
     debug_log(
-        f"[INFO] check_locate_exists query={query!r} found={found} elapsed_ms={elapsed_ms:.3f} db={db_path}"
+        f"[INFO] check_locate_exists query={query!r} found={found} count={count} "
+        f"elapsed_ms={elapsed_ms:.3f} db={db_path}"
     )
-    return found
+    return found, count, first_result
 
 
 def _build_display_name(name: str, rows) -> str:
@@ -775,12 +818,14 @@ def handle_message(msg: dict) -> dict:
     if target == "check_locate_exists":
         try:
             debug_log("[INFO] check_locate_exists start")
-            found = _check_locate_exists(text)
+            found, count, first_result = _check_locate_exists(text)
             return {
                 "status": "ok",
                 "target": target,
                 "req_id": req_id,
                 "found": bool(found),
+                "count": int(count),
+                "first_result": first_result,
             }
         except Exception as e:
             debug_log(f"[WARN] check_locate_exists failed: {e!r}")
