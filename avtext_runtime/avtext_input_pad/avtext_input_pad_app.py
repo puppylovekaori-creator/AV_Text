@@ -916,6 +916,7 @@ class AvTextInputPadApp:
 
     def on_close(self) -> None:
         try:
+            self.logger.log(f"[LIFECYCLE] on_close pid={os.getpid()}")
             self.flush_save_now(reason="終了前保存")
             self.persist_settings()
         finally:
@@ -1132,10 +1133,12 @@ def main(argv: list[str] | None = None) -> int:
     settings_dir = settings_home()
     logger = SimpleLogger(settings_dir / "logs" / "avtext_input_pad.log")
     store = SettingsStore(settings_dir / "settings.json")
+    logger.log(f"[LIFECYCLE] process start pid={os.getpid()}")
 
     root = tk.Tk()
     app = AvTextInputPadApp(root, store, logger)
     app.start()
+    logger.log(f"[LIFECYCLE] mainloop start pid={os.getpid()}")
 
     if args.runtime_dir:
         app.runtime_dir_var.set(args.runtime_dir)
@@ -1145,9 +1148,11 @@ def main(argv: list[str] | None = None) -> int:
         runner = SmokeTestRunner(app, Path(args.runtime_dir or app.runtime_paths.base_dir))
         root.after(250, runner.start)
         root.mainloop()
+        logger.log(f"[LIFECYCLE] mainloop end pid={os.getpid()} smoke=1")
         return int(getattr(root, "_smoke_exit_code", 0))
 
     root.mainloop()
+    logger.log(f"[LIFECYCLE] mainloop end pid={os.getpid()} smoke=0")
     return 0
 
 

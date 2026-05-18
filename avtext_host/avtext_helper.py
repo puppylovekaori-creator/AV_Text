@@ -41,6 +41,7 @@ NO_PATH = OUT_DIR / "no.txt"
 SETTING_INI_PATH = OUT_DIR / "setting.ini"
 MENU_ORDER_MODE_PATH = OUT_DIR / "menu_order_mode.json"
 INPUT_PAD_DIR = OUT_DIR / "avtext_input_pad"
+INPUT_PAD_PYW = INPUT_PAD_DIR / "avtext_input_pad.pyw"
 INPUT_PAD_LAUNCHER = INPUT_PAD_DIR / "Open-AVTextInputPad.cmd"
 INPUT_PAD_EXE = OUT_DIR / "avtext_input_pad_winforms" / "publish" / "AVTextInputPad.exe"
 INPUT_PAD_RELEASE_EXE = OUT_DIR / "avtext_input_pad_winforms" / "src" / "AVTextInputPad" / "bin" / "Release" / "net9.0-windows" / "AVTextInputPad.exe"
@@ -289,25 +290,40 @@ def _find_first_window(match_func):
 
 def _launch_input_pad() -> bool:
     try:
+        if INPUT_PAD_PYW.exists():
+            if _launch_python_input_pad(INPUT_PAD_PYW):
+                return True
+
         for exe_path in (INPUT_PAD_RELEASE_EXE, INPUT_PAD_EXE):
             if not exe_path.exists():
                 continue
-            if _launch_via_startfile(exe_path, f"exe: {exe_path}"):
-                return True
             if _launch_detached_process([str(exe_path)], str(exe_path.parent), f"exe: {exe_path}"):
                 return True
 
-        if INPUT_PAD_LAUNCHER.exists():
-            if _launch_via_startfile(INPUT_PAD_LAUNCHER, f"launcher: {INPUT_PAD_LAUNCHER}"):
-                return True
-            if _launch_detached_process(["cmd.exe", "/c", str(INPUT_PAD_LAUNCHER)], str(INPUT_PAD_DIR), f"launcher: {INPUT_PAD_LAUNCHER}"):
-                return True
     except Exception as e:
         debug_log(f"[WARN] launch_input_pad failed: {e!r}")
         return False
 
-    debug_log(f"[WARN] input pad launcher not found: {INPUT_PAD_LAUNCHER}")
+    debug_log(f"[WARN] input pad entry not found: {INPUT_PAD_PYW}")
     return False
+
+
+def _launch_python_input_pad(script_path: Path) -> bool:
+    try:
+        py_exe = Path(sys.executable or "")
+        gui_exe = py_exe.with_name("pythonw.exe") if py_exe else py_exe
+        if not gui_exe.exists():
+            gui_exe = py_exe
+        if not gui_exe or not gui_exe.exists():
+            debug_log(f"[WARN] python gui launcher not found from sys.executable={sys.executable!r}")
+            return False
+        if _launch_detached_process([str(gui_exe), str(script_path)], str(script_path.parent), f"pythonw: {script_path}"):
+            debug_log(f"[INFO] launched input pad via python direct: {gui_exe} {script_path}")
+            return True
+        return False
+    except Exception as e:
+        debug_log(f"[WARN] python input pad launch failed: {e!r}")
+        return False
 
 
 def _launch_via_startfile(path: Path, label: str) -> bool:
