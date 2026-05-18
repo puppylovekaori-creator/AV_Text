@@ -171,15 +171,23 @@ internal sealed class MainForm : Form
         _saveTimer.Tick += (_, _) => FlushPendingSaves();
 
         Load += (_, _) => OnFormLoaded();
-        FormClosing += (_, _) => PersistSettings();
+        Shown += (_, _) => WriteLog($"[LIFECYCLE] shown pid={Environment.ProcessId}");
+        FormClosing += (_, e) =>
+        {
+            WriteLog($"[LIFECYCLE] closing reason={e.CloseReason} pid={Environment.ProcessId}");
+            PersistSettings();
+        };
+        FormClosed += (_, _) => WriteLog($"[LIFECYCLE] closed pid={Environment.ProcessId}");
     }
 
     private void OnFormLoaded()
     {
+        WriteLog($"[LIFECYCLE] load-start pid={Environment.ProcessId}");
         RestoreWindowBounds();
         _runtimeDirTextBox.Text = _runtimePaths.BaseDirectory;
         ApplyRuntimeDirectory(forceReload: true);
         _watchTimer.Start();
+        WriteLog($"[LIFECYCLE] load-end runtime={_runtimePaths.BaseDirectory}");
     }
 
     private static TextBox CreateEditorTextBox(bool readOnly = false)

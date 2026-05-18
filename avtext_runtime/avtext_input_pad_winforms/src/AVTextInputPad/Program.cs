@@ -11,10 +11,12 @@ internal static class Program
     private static void Main()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        MainForm.WriteEmergencyLog($"process start pid={Environment.ProcessId}");
 
         using var mutex = new Mutex(true, MutexName, out var createdNew);
         if (!createdNew)
         {
+            MainForm.WriteEmergencyLog("process reused existing instance");
             NativeWindowHelper.FocusFirstWindowContaining(MainForm.WindowTitle);
             return;
         }
@@ -29,7 +31,18 @@ internal static class Program
         {
             MainForm.WriteEmergencyLog($"fatal exception: {args.ExceptionObject}");
         };
+        Application.ApplicationExit += (_, _) =>
+        {
+            MainForm.WriteEmergencyLog($"application exit pid={Environment.ProcessId}");
+        };
 
-        Application.Run(new MainForm());
+        try
+        {
+            Application.Run(new MainForm());
+        }
+        finally
+        {
+            MainForm.WriteEmergencyLog($"process end pid={Environment.ProcessId}");
+        }
     }
 }
