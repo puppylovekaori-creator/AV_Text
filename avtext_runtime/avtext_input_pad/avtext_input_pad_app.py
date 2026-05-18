@@ -23,7 +23,10 @@ DEFAULT_WATCH_INTERVAL_MS = 1200
 DEFAULT_SAVE_DELAY_MS = 450
 RELOAD_DEBOUNCE_MS = 250
 ASYNC_POLL_MS = 120
-DEFAULT_WINDOW_GEOMETRY = "1180x820"
+DEFAULT_WINDOW_GEOMETRY = "760x620"
+LEGACY_WINDOW_GEOMETRY = "1180x820"
+MIN_WINDOW_WIDTH = 620
+MIN_WINDOW_HEIGHT = 500
 
 FIELD_ORDER = ("title", "actress", "no")
 FIELD_LABELS = {
@@ -170,7 +173,8 @@ class SettingsStore:
         runtime_dir = str(payload.get("runtime_dir") or default_runtime_dir())
         watch_interval_ms = int(payload.get("watch_interval_ms") or DEFAULT_WATCH_INTERVAL_MS)
         save_delay_ms = int(payload.get("save_delay_ms") or DEFAULT_SAVE_DELAY_MS)
-        window_geometry = str(payload.get("window_geometry") or DEFAULT_WINDOW_GEOMETRY)
+        raw_window_geometry = str(payload.get("window_geometry") or DEFAULT_WINDOW_GEOMETRY)
+        window_geometry = normalize_window_geometry(raw_window_geometry)
         return AppSettings(
             runtime_dir=runtime_dir,
             watch_interval_ms=max(500, watch_interval_ms),
@@ -248,6 +252,38 @@ def shorten_detail(text: str, limit: int = 180) -> str:
     return raw[: limit - 1] + "…"
 
 
+def parse_window_geometry(geometry: str) -> tuple[int, int] | None:
+    raw = (geometry or "").strip()
+    if not raw or "x" not in raw:
+        return None
+
+    size_part = raw.split("+", 1)[0]
+    width_text, _, height_text = size_part.partition("x")
+    try:
+        width = int(width_text)
+        height = int(height_text)
+    except ValueError:
+        return None
+
+    return width, height
+
+
+def normalize_window_geometry(geometry: str, fallback: str = DEFAULT_WINDOW_GEOMETRY) -> str:
+    parsed = parse_window_geometry(geometry)
+    if parsed is None:
+        return fallback
+
+    width, height = parsed
+    if width <= 1 or height <= 1:
+        return fallback
+    legacy_width, legacy_height = parse_window_geometry(LEGACY_WINDOW_GEOMETRY) or (0, 0)
+    if width == legacy_width and height == legacy_height:
+        return fallback
+    if width < MIN_WINDOW_WIDTH or height < MIN_WINDOW_HEIGHT:
+        return fallback
+    return geometry
+
+
 class AvTextInputPadApp:
     def __init__(self, root: tk.Tk, settings_store: SettingsStore, logger: SimpleLogger):
         self.root = root
@@ -281,6 +317,8 @@ class AvTextInputPadApp:
         self.no_var = tk.StringVar()
 
         self.button_map: dict[str, ttk.Button] = {}
+        self.main_notebook: ttk.Notebook | None = None
+        self.tab_frames: dict[str, ttk.Frame] = {}
         self.text_widgets: dict[str, ScrolledText] = {}
         self.result_widget: ScrolledText | None = None
         self.progress: ttk.Progressbar | None = None
@@ -295,9 +333,9 @@ class AvTextInputPadApp:
             self.root.geometry(self.settings.window_geometry)
         except Exception:
             self.root.geometry(DEFAULT_WINDOW_GEOMETRY)
-        self.root.minsize(980, 700)
+        self.root.minsize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
 
-        outer = ttk.Frame(self.root, padding=12)
+        outer = ttk.Frame(self.root, padding=10)
         outer.grid(sticky="nsew")
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
@@ -317,10 +355,10 @@ class AvTextInputPadApp:
         ttk.Label(
             runtime_frame,
             text="既定値は %APPDATA%\\sakura\\avtext です。設定は %LOCALAPPDATA% に保存します。",
-        ).grid(row=1, column=0, columnspan=4, padx=10, pady=(0, 8), sticky="w")
+        ).grid(row=1, column=0, columnspan=4, padx=10, pady=(0, 6), sticky="w")
 
         status_frame = ttk.LabelFrame(outer, text="状態")
-        status_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        status_frame.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         status_frame.columnconfigure(1, weight=1)
 
         self.status_label = ttk.Label(status_frame, textvariable=self.status_var)
@@ -338,8 +376,8 @@ class AvTextInputPadApp:
         )
 
         buttons = ttk.Frame(outer)
-        buttons.grid(row=2, column=0, sticky="ew", pady=(10, 10))
-        for col in range(5):
+        buttons.grid(row=2, column=0, sticky="ew", pady=(8, 8))
+        for col in range(3):
             buttons.columnconfigure(col, weight=1)
 
         self.button_map["title_and_actress"] = ttk.Button(buttons, text="変換", command=lambda: self.start_conversion("title_and_actress"))
@@ -347,46 +385,52 @@ class AvTextInputPadApp:
         self.button_map["title_only"] = ttk.Button(buttons, text="タイトルのみ変換", command=lambda: self.start_conversion("title_only"))
         self.button_map["title_only"].grid(row=0, column=1, padx=8, sticky="ew")
         self.button_map["no_title"] = ttk.Button(buttons, text="品番連番変換", command=lambda: self.start_conversion("no_title"))
-        self.button_map["no_title"].grid(row=0, column=2, padx=8, sticky="ew")
+        self.button_map["no_title"].grid(row=0, column=2, padx=(8, 0), sticky="ew")
         self.button_map["copy"] = ttk.Button(buttons, text="結果をコピー", command=self.copy_result)
-        self.button_map["copy"].grid(row=0, column=3, padx=8, sticky="ew")
+        self.button_map["copy"].grid(row=1, column=0, padx=(0, 8), pady=(8, 0), sticky="ew")
         self.button_map["open"] = ttk.Button(buttons, text="出力ファイルを開く", command=self.open_output_file)
-        self.button_map["open"].grid(row=0, column=4, padx=(8, 0), sticky="ew")
+        self.button_map["open"].grid(row=1, column=1, padx=8, pady=(8, 0), sticky="ew")
 
         content = ttk.Frame(outer)
         content.grid(row=3, column=0, sticky="nsew")
         content.columnconfigure(0, weight=1)
-        content.columnconfigure(1, weight=1)
-        content.rowconfigure(0, weight=1)
+        content.rowconfigure(1, weight=1)
 
-        input_frame = ttk.LabelFrame(content, text="入力")
-        input_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        input_frame.columnconfigure(0, weight=1)
-        input_frame.rowconfigure(1, weight=1)
-        input_frame.rowconfigure(3, weight=1)
+        no_frame = ttk.LabelFrame(content, text="品番")
+        no_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        no_frame.columnconfigure(1, weight=1)
+        ttk.Label(no_frame, text="品番").grid(row=0, column=0, padx=(10, 8), pady=8, sticky="w")
+        ttk.Entry(no_frame, textvariable=self.no_var).grid(row=0, column=1, padx=(0, 10), pady=8, sticky="ew")
 
-        ttk.Label(input_frame, text="タイトル").grid(row=0, column=0, padx=10, pady=(10, 4), sticky="w")
-        title_text = ScrolledText(input_frame, height=4, wrap="word", undo=True)
-        title_text.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="nsew")
-        self.text_widgets["title"] = title_text
+        notebook = ttk.Notebook(content)
+        notebook.grid(row=1, column=0, sticky="nsew")
+        self.main_notebook = notebook
 
-        ttk.Label(input_frame, text="女優").grid(row=2, column=0, padx=10, pady=(0, 4), sticky="w")
-        actress_text = ScrolledText(input_frame, height=6, wrap="word", undo=True)
-        actress_text.grid(row=3, column=0, padx=10, pady=(0, 10), sticky="nsew")
+        actress_tab = ttk.Frame(notebook, padding=8)
+        actress_tab.columnconfigure(0, weight=1)
+        actress_tab.rowconfigure(0, weight=1)
+        notebook.add(actress_tab, text="女優")
+        self.tab_frames["actress"] = actress_tab
+        actress_text = ScrolledText(actress_tab, height=15, wrap="word", undo=True)
+        actress_text.grid(row=0, column=0, sticky="nsew")
         self.text_widgets["actress"] = actress_text
 
-        no_frame = ttk.Frame(input_frame)
-        no_frame.grid(row=4, column=0, padx=10, pady=(0, 10), sticky="ew")
-        no_frame.columnconfigure(1, weight=1)
-        ttk.Label(no_frame, text="品番").grid(row=0, column=0, padx=(0, 8), sticky="w")
-        ttk.Entry(no_frame, textvariable=self.no_var).grid(row=0, column=1, sticky="ew")
+        title_tab = ttk.Frame(notebook, padding=8)
+        title_tab.columnconfigure(0, weight=1)
+        title_tab.rowconfigure(0, weight=1)
+        notebook.add(title_tab, text="タイトル")
+        self.tab_frames["title"] = title_tab
+        title_text = ScrolledText(title_tab, height=15, wrap="word", undo=True)
+        title_text.grid(row=0, column=0, sticky="nsew")
+        self.text_widgets["title"] = title_text
 
-        result_frame = ttk.LabelFrame(content, text="変換結果")
-        result_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
-        result_frame.columnconfigure(0, weight=1)
-        result_frame.rowconfigure(0, weight=1)
-        self.result_widget = ScrolledText(result_frame, wrap="word", undo=False)
-        self.result_widget.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        result_tab = ttk.Frame(notebook, padding=8)
+        result_tab.columnconfigure(0, weight=1)
+        result_tab.rowconfigure(0, weight=1)
+        notebook.add(result_tab, text="変換結果")
+        self.tab_frames["result"] = result_tab
+        self.result_widget = ScrolledText(result_tab, wrap="word", undo=False, height=15)
+        self.result_widget.grid(row=0, column=0, sticky="nsew")
         self.result_widget.configure(state="disabled")
 
     def _bind_events(self) -> None:
@@ -443,10 +487,22 @@ class AvTextInputPadApp:
 
     def persist_settings(self) -> None:
         try:
-            self.settings.window_geometry = self.root.winfo_geometry()
+            self.root.update_idletasks()
+            self.settings.window_geometry = normalize_window_geometry(
+                self.root.winfo_geometry(),
+                fallback=self.settings.window_geometry,
+            )
         except Exception:
             pass
         self.settings_store.save(self.settings)
+
+    def select_tab(self, name: str) -> None:
+        if self.main_notebook is None:
+            return
+        frame = self.tab_frames.get(name)
+        if frame is None:
+            return
+        self.main_notebook.select(frame)
 
     def set_status(self, status: str, detail: str, *, busy: bool = False, error: bool = False) -> None:
         self.status_var.set(status)
@@ -690,6 +746,7 @@ class AvTextInputPadApp:
                 detail = f"{MODE_SPECS[mode]['label']} 完了 ({elapsed_ms} ms)"
                 self.set_status("完了", detail, busy=False)
                 self.set_notice(shorten_detail(stdout) if stdout else "")
+                self.select_tab("result")
             else:
                 combined = stdout.strip() or stderr.strip() or f"exit={returncode}"
                 detail = f"{MODE_SPECS[mode]['label']} 失敗"
