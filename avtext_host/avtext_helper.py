@@ -292,36 +292,68 @@ def _launch_input_pad() -> bool:
         for exe_path in (INPUT_PAD_RELEASE_EXE, INPUT_PAD_EXE):
             if not exe_path.exists():
                 continue
-            creationflags = 0
-            if os.name == "nt":
-                creationflags = 0x00000008 | 0x08000000
-            subprocess.Popen(
-                [str(exe_path)],
-                cwd=str(exe_path.parent),
-                creationflags=creationflags,
-                close_fds=True,
-            )
-            debug_log(f"[INFO] launched input pad via exe: {exe_path}")
-            return True
+            if _launch_via_startfile(exe_path, f"exe: {exe_path}"):
+                return True
+            if _launch_detached_process([str(exe_path)], str(exe_path.parent), f"exe: {exe_path}"):
+                return True
 
         if INPUT_PAD_LAUNCHER.exists():
-            creationflags = 0
-            if os.name == "nt":
-                creationflags = 0x00000008 | 0x08000000
-            subprocess.Popen(
-                ["cmd.exe", "/c", str(INPUT_PAD_LAUNCHER)],
-                cwd=str(INPUT_PAD_DIR),
-                creationflags=creationflags,
-                close_fds=True,
-            )
-            debug_log(f"[INFO] launched input pad via launcher: {INPUT_PAD_LAUNCHER}")
-            return True
+            if _launch_via_startfile(INPUT_PAD_LAUNCHER, f"launcher: {INPUT_PAD_LAUNCHER}"):
+                return True
+            if _launch_detached_process(["cmd.exe", "/c", str(INPUT_PAD_LAUNCHER)], str(INPUT_PAD_DIR), f"launcher: {INPUT_PAD_LAUNCHER}"):
+                return True
     except Exception as e:
         debug_log(f"[WARN] launch_input_pad failed: {e!r}")
         return False
 
     debug_log(f"[WARN] input pad launcher not found: {INPUT_PAD_LAUNCHER}")
     return False
+
+
+def _launch_via_startfile(path: Path, label: str) -> bool:
+    if os.name != "nt" or not hasattr(os, "startfile"):
+        return False
+    try:
+        os.startfile(str(path))
+        debug_log(f"[INFO] launched input pad via {label} (startfile)")
+        return True
+    except Exception as e:
+        debug_log(f"[WARN] startfile launch failed for {label}: {e!r}")
+        return False
+
+
+def _launch_detached_process(cmd, cwd: str, label: str) -> bool:
+    base_flags = 0
+    if os.name == "nt":
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+        CREATE_NO_WINDOW = 0x08000000
+        base_flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+        try:
+            subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                creationflags=base_flags | CREATE_BREAKAWAY_FROM_JOB,
+                close_fds=True,
+            )
+            debug_log(f"[INFO] launched input pad via {label} (breakaway)")
+            return True
+        except Exception as e:
+            debug_log(f"[WARN] breakaway launch failed for {label}: {e!r}")
+
+    try:
+        subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            creationflags=base_flags,
+            close_fds=True,
+        )
+        debug_log(f"[INFO] launched input pad via {label} (base)")
+        return True
+    except Exception as e:
+        debug_log(f"[WARN] base launch failed for {label}: {e!r}")
+        return False
 
 
 def _focus_input_pad_window() -> str:
