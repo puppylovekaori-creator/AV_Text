@@ -23,10 +23,12 @@ DEFAULT_WATCH_INTERVAL_MS = 1200
 DEFAULT_SAVE_DELAY_MS = 450
 RELOAD_DEBOUNCE_MS = 250
 ASYNC_POLL_MS = 120
-DEFAULT_WINDOW_GEOMETRY = "760x620"
+DEFAULT_WINDOW_GEOMETRY = "1280x245"
 LEGACY_WINDOW_GEOMETRY = "1180x820"
-MIN_WINDOW_WIDTH = 620
-MIN_WINDOW_HEIGHT = 500
+MIN_WINDOW_WIDTH = 860
+MIN_WINDOW_HEIGHT = 220
+MAX_WINDOW_WIDTH = 1400
+MAX_WINDOW_HEIGHT = 255
 
 FIELD_ORDER = ("title", "actress", "no")
 FIELD_LABELS = {
@@ -279,6 +281,8 @@ def normalize_window_geometry(geometry: str, fallback: str = DEFAULT_WINDOW_GEOM
     legacy_width, legacy_height = parse_window_geometry(LEGACY_WINDOW_GEOMETRY) or (0, 0)
     if width == legacy_width and height == legacy_height:
         return fallback
+    if width > MAX_WINDOW_WIDTH or height > MAX_WINDOW_HEIGHT:
+        return fallback
     if width < MIN_WINDOW_WIDTH or height < MIN_WINDOW_HEIGHT:
         return fallback
     return geometry
@@ -334,102 +338,98 @@ class AvTextInputPadApp:
         except Exception:
             self.root.geometry(DEFAULT_WINDOW_GEOMETRY)
         self.root.minsize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+        self.root.maxsize(
+            min(self.root.winfo_screenwidth(), MAX_WINDOW_WIDTH),
+            min(self.root.winfo_screenheight(), MAX_WINDOW_HEIGHT),
+        )
 
-        outer = ttk.Frame(self.root, padding=10)
+        outer = ttk.Frame(self.root, padding=6)
         outer.grid(sticky="nsew")
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         outer.columnconfigure(0, weight=1)
         outer.rowconfigure(3, weight=1)
 
-        runtime_frame = ttk.LabelFrame(outer, text="ランタイム")
+        runtime_frame = ttk.Frame(outer)
         runtime_frame.grid(row=0, column=0, sticky="ew")
         runtime_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(runtime_frame, text="ランタイムフォルダ").grid(row=0, column=0, padx=(10, 6), pady=8, sticky="w")
+        ttk.Label(runtime_frame, text="ランタイム").grid(row=0, column=0, padx=(0, 6), pady=0, sticky="w")
         runtime_entry = ttk.Entry(runtime_frame, textvariable=self.runtime_dir_var)
-        runtime_entry.grid(row=0, column=1, padx=6, pady=8, sticky="ew")
-        ttk.Button(runtime_frame, text="参照", command=self.choose_runtime_dir).grid(row=0, column=2, padx=6, pady=8)
-        ttk.Button(runtime_frame, text="再読込", command=lambda: self.apply_runtime_dir(force_reload=True)).grid(row=0, column=3, padx=(6, 10), pady=8)
-
-        ttk.Label(
-            runtime_frame,
-            text="既定値は %APPDATA%\\sakura\\avtext です。設定は %LOCALAPPDATA% に保存します。",
-        ).grid(row=1, column=0, columnspan=4, padx=10, pady=(0, 6), sticky="w")
-
-        status_frame = ttk.LabelFrame(outer, text="状態")
-        status_frame.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        status_frame.columnconfigure(1, weight=1)
-
-        self.status_label = ttk.Label(status_frame, textvariable=self.status_var)
-        self.status_label.grid(row=0, column=0, padx=(10, 8), pady=8, sticky="w")
-        ttk.Label(status_frame, textvariable=self.detail_var).grid(row=0, column=1, padx=8, pady=8, sticky="w")
-        self.progress = ttk.Progressbar(status_frame, mode="indeterminate", length=160)
-        self.progress.grid(row=0, column=2, padx=(8, 10), pady=8, sticky="e")
-        ttk.Label(status_frame, textvariable=self.notice_var, foreground="#8a2b06").grid(
-            row=1,
-            column=0,
-            columnspan=3,
-            padx=10,
-            pady=(0, 8),
-            sticky="w",
-        )
+        runtime_entry.grid(row=0, column=1, padx=(0, 6), pady=0, sticky="ew")
+        ttk.Button(runtime_frame, text="参照", command=self.choose_runtime_dir).grid(row=0, column=2, padx=(0, 4), pady=0)
+        ttk.Button(runtime_frame, text="再読込", command=lambda: self.apply_runtime_dir(force_reload=True)).grid(row=0, column=3, pady=0)
 
         buttons = ttk.Frame(outer)
-        buttons.grid(row=2, column=0, sticky="ew", pady=(8, 8))
-        for col in range(3):
-            buttons.columnconfigure(col, weight=1)
+        buttons.grid(row=1, column=0, sticky="ew", pady=(6, 4))
+        for col in range(10):
+            buttons.columnconfigure(col, weight=0)
+        buttons.columnconfigure(8, weight=1)
 
         self.button_map["title_and_actress"] = ttk.Button(buttons, text="変換", command=lambda: self.start_conversion("title_and_actress"))
-        self.button_map["title_and_actress"].grid(row=0, column=0, padx=(0, 8), sticky="ew")
+        self.button_map["title_and_actress"].grid(row=0, column=0, padx=(0, 4), sticky="ew")
         self.button_map["title_only"] = ttk.Button(buttons, text="タイトルのみ変換", command=lambda: self.start_conversion("title_only"))
-        self.button_map["title_only"].grid(row=0, column=1, padx=8, sticky="ew")
+        self.button_map["title_only"].grid(row=0, column=1, padx=4, sticky="ew")
         self.button_map["no_title"] = ttk.Button(buttons, text="品番連番変換", command=lambda: self.start_conversion("no_title"))
-        self.button_map["no_title"].grid(row=0, column=2, padx=(8, 0), sticky="ew")
+        self.button_map["no_title"].grid(row=0, column=2, padx=4, sticky="ew")
         self.button_map["copy"] = ttk.Button(buttons, text="結果をコピー", command=self.copy_result)
-        self.button_map["copy"].grid(row=1, column=0, padx=(0, 8), pady=(8, 0), sticky="ew")
+        self.button_map["copy"].grid(row=0, column=3, padx=4, sticky="ew")
         self.button_map["open"] = ttk.Button(buttons, text="出力ファイルを開く", command=self.open_output_file)
-        self.button_map["open"].grid(row=1, column=1, padx=8, pady=(8, 0), sticky="ew")
+        self.button_map["open"].grid(row=0, column=4, padx=4, sticky="ew")
+        ttk.Label(buttons, text="品番").grid(row=0, column=5, padx=(8, 4), sticky="w")
+        ttk.Entry(buttons, textvariable=self.no_var, width=10).grid(row=0, column=6, padx=(0, 8), sticky="w")
+
+        status_frame = ttk.Frame(outer)
+        status_frame.grid(row=2, column=0, sticky="ew", pady=(0, 4))
+        status_frame.columnconfigure(1, weight=1)
+        status_frame.columnconfigure(2, weight=1)
+
+        self.status_label = ttk.Label(status_frame, textvariable=self.status_var)
+        self.status_label.grid(row=0, column=0, padx=(0, 8), pady=0, sticky="w")
+        ttk.Label(status_frame, textvariable=self.detail_var).grid(row=0, column=1, padx=(0, 8), pady=0, sticky="w")
+        ttk.Label(status_frame, textvariable=self.notice_var, foreground="#8a2b06").grid(
+            row=0,
+            column=2,
+            padx=(0, 8),
+            pady=0,
+            sticky="w",
+        )
+        self.progress = ttk.Progressbar(status_frame, mode="indeterminate", length=110)
+        self.progress.grid(row=0, column=3, pady=0, sticky="e")
 
         content = ttk.Frame(outer)
         content.grid(row=3, column=0, sticky="nsew")
         content.columnconfigure(0, weight=1)
-        content.rowconfigure(1, weight=1)
-
-        no_frame = ttk.LabelFrame(content, text="品番")
-        no_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        no_frame.columnconfigure(1, weight=1)
-        ttk.Label(no_frame, text="品番").grid(row=0, column=0, padx=(10, 8), pady=8, sticky="w")
-        ttk.Entry(no_frame, textvariable=self.no_var).grid(row=0, column=1, padx=(0, 10), pady=8, sticky="ew")
+        content.rowconfigure(0, weight=1)
 
         notebook = ttk.Notebook(content)
-        notebook.grid(row=1, column=0, sticky="nsew")
+        notebook.grid(row=0, column=0, sticky="nsew")
         self.main_notebook = notebook
 
-        actress_tab = ttk.Frame(notebook, padding=8)
+        actress_tab = ttk.Frame(notebook, padding=4)
         actress_tab.columnconfigure(0, weight=1)
         actress_tab.rowconfigure(0, weight=1)
         notebook.add(actress_tab, text="女優")
         self.tab_frames["actress"] = actress_tab
-        actress_text = ScrolledText(actress_tab, height=15, wrap="word", undo=True)
+        actress_text = ScrolledText(actress_tab, height=8, wrap="word", undo=True)
         actress_text.grid(row=0, column=0, sticky="nsew")
         self.text_widgets["actress"] = actress_text
 
-        title_tab = ttk.Frame(notebook, padding=8)
+        title_tab = ttk.Frame(notebook, padding=4)
         title_tab.columnconfigure(0, weight=1)
         title_tab.rowconfigure(0, weight=1)
         notebook.add(title_tab, text="タイトル")
         self.tab_frames["title"] = title_tab
-        title_text = ScrolledText(title_tab, height=15, wrap="word", undo=True)
+        title_text = ScrolledText(title_tab, height=8, wrap="word", undo=True)
         title_text.grid(row=0, column=0, sticky="nsew")
         self.text_widgets["title"] = title_text
 
-        result_tab = ttk.Frame(notebook, padding=8)
+        result_tab = ttk.Frame(notebook, padding=4)
         result_tab.columnconfigure(0, weight=1)
         result_tab.rowconfigure(0, weight=1)
         notebook.add(result_tab, text="変換結果")
         self.tab_frames["result"] = result_tab
-        self.result_widget = ScrolledText(result_tab, wrap="word", undo=False, height=15)
+        self.result_widget = ScrolledText(result_tab, wrap="word", undo=False, height=8)
         self.result_widget.grid(row=0, column=0, sticky="nsew")
         self.result_widget.configure(state="disabled")
 
