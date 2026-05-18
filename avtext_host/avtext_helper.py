@@ -42,7 +42,8 @@ SETTING_INI_PATH = OUT_DIR / "setting.ini"
 MENU_ORDER_MODE_PATH = OUT_DIR / "menu_order_mode.json"
 INPUT_PAD_DIR = OUT_DIR / "avtext_input_pad"
 INPUT_PAD_LAUNCHER = INPUT_PAD_DIR / "Open-AVTextInputPad.cmd"
-INPUT_PAD_SCRIPT = INPUT_PAD_DIR / "avtext_input_pad.pyw"
+INPUT_PAD_EXE = OUT_DIR / "avtext_input_pad_winforms" / "publish" / "AVTextInputPad.exe"
+INPUT_PAD_RELEASE_EXE = OUT_DIR / "avtext_input_pad_winforms" / "src" / "AVTextInputPad" / "bin" / "Release" / "net9.0-windows" / "AVTextInputPad.exe"
 INPUT_PAD_WINDOW_TOKEN = "AV Text 専用入力エディタ"
 PYTHON_CHOICE_PATH = OUT_DIR / "avtext_python_choice.txt"
 
@@ -288,37 +289,20 @@ def _find_first_window(match_func):
 
 def _launch_input_pad() -> bool:
     try:
-        if INPUT_PAD_SCRIPT.exists():
-            pyw_candidates = []
-
-            try:
-                cached_python = PYTHON_CHOICE_PATH.read_text(encoding="utf-8").strip()
-                if cached_python:
-                    cached_path = Path(cached_python)
-                    pyw_candidates.append(cached_path.with_name("pythonw.exe"))
-            except Exception:
-                pass
-
-            try:
-                current_python = Path(sys.executable)
-                pyw_candidates.append(current_python.with_name("pythonw.exe"))
-            except Exception:
-                pass
-
-            for pyw_path in pyw_candidates:
-                if not pyw_path.exists():
-                    continue
-                creationflags = 0
-                if os.name == "nt":
-                    creationflags = 0x00000008 | 0x08000000
-                subprocess.Popen(
-                    [str(pyw_path), str(INPUT_PAD_SCRIPT)],
-                    cwd=str(INPUT_PAD_DIR),
-                    creationflags=creationflags,
-                    close_fds=True,
-                )
-                debug_log(f"[INFO] launched input pad via pythonw: {pyw_path}")
-                return True
+        for exe_path in (INPUT_PAD_RELEASE_EXE, INPUT_PAD_EXE):
+            if not exe_path.exists():
+                continue
+            creationflags = 0
+            if os.name == "nt":
+                creationflags = 0x00000008 | 0x08000000
+            subprocess.Popen(
+                [str(exe_path)],
+                cwd=str(exe_path.parent),
+                creationflags=creationflags,
+                close_fds=True,
+            )
+            debug_log(f"[INFO] launched input pad via exe: {exe_path}")
+            return True
 
         if INPUT_PAD_LAUNCHER.exists():
             creationflags = 0

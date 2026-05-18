@@ -1,0 +1,4 @@
+publish/
+src/AVTextInputPad/bin/
+src/AVTextInputPad/obj/
+src/AVTextInputPad/*.user
