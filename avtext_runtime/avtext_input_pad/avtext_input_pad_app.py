@@ -388,11 +388,17 @@ class AvTextInputPadApp:
         self.tab_frames: dict[str, ttk.Frame] = {}
         self.text_widgets: dict[str, ScrolledText] = {}
         self.result_widget: ScrolledText | None = None
+        self.runtime_entry: ttk.Entry | None = None
+        self.no_entry: ttk.Entry | None = None
         self.progress: ttk.Progressbar | None = None
         self.status_label: ttk.Label | None = None
+        self.edit_context_menu: tk.Menu | None = None
+        self.readonly_context_menu: tk.Menu | None = None
+        self._context_target: tk.Misc | None = None
 
         self._build_ui()
         self._bind_events()
+        self._build_context_menus()
 
     def _build_ui(self) -> None:
         self.root.title(APP_NAME)
@@ -420,6 +426,7 @@ class AvTextInputPadApp:
         ttk.Label(runtime_frame, text="ランタイム").grid(row=0, column=0, padx=(0, 6), pady=0, sticky="w")
         runtime_entry = ttk.Entry(runtime_frame, textvariable=self.runtime_dir_var)
         runtime_entry.grid(row=0, column=1, padx=(0, 6), pady=0, sticky="ew")
+        self.runtime_entry = runtime_entry
         ttk.Button(runtime_frame, text="参照", command=self.choose_runtime_dir).grid(row=0, column=2, padx=(0, 4), pady=0)
         ttk.Button(runtime_frame, text="再読込", command=lambda: self.apply_runtime_dir(force_reload=True)).grid(row=0, column=3, pady=0)
 
@@ -440,7 +447,9 @@ class AvTextInputPadApp:
         self.button_map["open"] = ttk.Button(buttons, text="出力ファイルを開く", command=self.open_output_file)
         self.button_map["open"].grid(row=0, column=4, padx=4, sticky="ew")
         ttk.Label(buttons, text="品番").grid(row=0, column=5, padx=(8, 4), sticky="w")
-        ttk.Entry(buttons, textvariable=self.no_var, width=10).grid(row=0, column=6, padx=(0, 8), sticky="w")
+        no_entry = ttk.Entry(buttons, textvariable=self.no_var, width=10)
+        no_entry.grid(row=0, column=6, padx=(0, 8), sticky="w")
+        self.no_entry = no_entry
 
         status_frame = ttk.Frame(outer)
         status_frame.grid(row=2, column=0, sticky="ew", pady=(0, 4))
@@ -506,6 +515,141 @@ class AvTextInputPadApp:
             widget.bind("<<Modified>>", lambda _e, field=key: self.on_text_modified(field))
 
         self.no_var.trace_add("write", lambda *_args: self.on_entry_modified("no"))
+
+    def _build_context_menus(self) -> None:
+        self.edit_context_menu = tk.Menu(self.root, tearoff=False)
+        self.edit_context_menu.add_command(label="元に戻す", command=self.context_undo)
+        self.edit_context_menu.add_command(label="やり直す", command=self.context_redo)
+        self.edit_context_menu.add_separator()
+        self.edit_context_menu.add_command(label="切り取り", command=self.context_cut)
+        self.edit_context_menu.add_command(label="コピー", command=self.context_copy)
+        self.edit_context_menu.add_command(label="貼り付け", command=self.context_paste)
+        self.edit_context_menu.add_command(label="削除", command=self.context_delete)
+        self.edit_context_menu.add_separator()
+        self.edit_context_menu.add_command(label="すべて選択", command=self.context_select_all)
+
+        self.readonly_context_menu = tk.Menu(self.root, tearoff=False)
+        self.readonly_context_menu.add_command(label="コピー", command=self.context_copy)
+        self.readonly_context_menu.add_command(label="すべて選択", command=self.context_select_all)
+
+        widgets: list[tuple[tk.Misc, bool]] = []
+        widgets.extend((widget, False) for widget in self.text_widgets.values())
+        if self.result_widget is not None:
+            widgets.append((self.result_widget, True))
+        if self.runtime_entry is not None:
+            widgets.append((self.runtime_entry, False))
+        if self.no_entry is not None:
+            widgets.append((self.no_entry, False))
+
+        for widget, readonly in widgets:
+            self._bind_context_menu(widget, readonly=readonly)
+
+    def _bind_context_menu(self, widget: tk.Misc, *, readonly: bool) -> None:
+        widget.bind("<Button-3>", lambda event, ro=readonly: self.show_context_menu(event, readonly=ro), add=True)
+        widget.bind("<Shift-F10>", lambda event, ro=readonly: self.show_context_menu(event, readonly=ro), add=True)
+        widget.bind("<Menu>", lambda event, ro=readonly: self.show_context_menu(event, readonly=ro), add=True)
+
+    def show_context_menu(self, event: tk.Event, *, readonly: bool) -> str:
+        widget = event.widget
+        self._context_target = widget
+        try:
+            widget.focus_force()
+        except Exception:
+            pass
+
+        menu = self.readonly_context_menu if readonly else self.edit_context_menu
+        if menu is None:
+            return "break"
+
+        x_root = getattr(event, "x_root", 0) or 0
+        y_root = getattr(event, "y_root", 0) or 0
+        if x_root <= 0 and y_root <= 0:
+            try:
+                x_root = widget.winfo_rootx() + 12
+                y_root = widget.winfo_rooty() + 12
+            except Exception:
+                x_root, y_root = 10, 10
+
+        menu.tk_popup(x_root, y_root)
+        menu.grab_release()
+        return "break"
+
+    def _current_context_widget(self) -> tk.Misc | None:
+        widget = self._context_target
+        if widget is not None:
+            return widget
+        return self.root.focus_get()
+
+    def context_cut(self) -> None:
+        widget = self._current_context_widget()
+        if widget is None:
+            return
+        if isinstance(widget, (tk.Text, ScrolledText, tk.Entry, ttk.Entry)):
+            widget.event_generate("<<Cut>>")
+
+    def context_copy(self) -> None:
+        widget = self._current_context_widget()
+        if widget is None:
+            return
+        if isinstance(widget, (tk.Text, ScrolledText, tk.Entry, ttk.Entry)):
+            widget.event_generate("<<Copy>>")
+
+    def context_paste(self) -> None:
+        widget = self._current_context_widget()
+        if widget is None:
+            return
+        if isinstance(widget, (tk.Text, ScrolledText, tk.Entry, ttk.Entry)):
+            widget.event_generate("<<Paste>>")
+
+    def context_delete(self) -> None:
+        widget = self._current_context_widget()
+        if widget is None:
+            return
+        try:
+            if isinstance(widget, (tk.Text, ScrolledText)):
+                widget.delete("sel.first", "sel.last")
+            elif isinstance(widget, (tk.Entry, ttk.Entry)):
+                start = int(widget.index("sel.first"))
+                end = int(widget.index("sel.last"))
+                widget.delete(start, end)
+        except Exception:
+            pass
+
+    def context_select_all(self) -> None:
+        widget = self._current_context_widget()
+        if widget is None:
+            return
+        if isinstance(widget, (tk.Text, ScrolledText)):
+            widget.tag_add("sel", "1.0", "end-1c")
+            widget.mark_set("insert", "end-1c")
+            widget.see("insert")
+        elif isinstance(widget, (tk.Entry, ttk.Entry)):
+            widget.selection_range(0, "end")
+            widget.icursor("end")
+
+    def context_undo(self) -> None:
+        widget = self._current_context_widget()
+        if widget is None:
+            return
+        try:
+            if isinstance(widget, (tk.Text, ScrolledText)):
+                widget.edit_undo()
+            elif isinstance(widget, (tk.Entry, ttk.Entry)):
+                widget.event_generate("<<Undo>>")
+        except Exception:
+            pass
+
+    def context_redo(self) -> None:
+        widget = self._current_context_widget()
+        if widget is None:
+            return
+        try:
+            if isinstance(widget, (tk.Text, ScrolledText)):
+                widget.edit_redo()
+            elif isinstance(widget, (tk.Entry, ttk.Entry)):
+                widget.event_generate("<<Redo>>")
+        except Exception:
+            pass
 
     def _on_root_return(self, event: tk.Event) -> None:
         if event.widget is self.root:
