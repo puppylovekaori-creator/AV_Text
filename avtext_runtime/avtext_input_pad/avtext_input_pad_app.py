@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import locale
 import os
 import queue
 import subprocess
@@ -252,6 +253,31 @@ def shorten_detail(text: str, limit: int = 180) -> str:
     if len(raw) <= limit:
         return raw
     return raw[: limit - 1] + "…"
+
+
+def decode_console_bytes(raw: bytes) -> tuple[str, str]:
+    if not raw:
+        return "", "empty"
+
+    encodings: list[str] = ["utf-8", "utf-8-sig"]
+    preferred = (locale.getpreferredencoding(False) or "").strip()
+    if preferred:
+        encodings.append(preferred)
+    encodings.extend(["cp932", "mbcs"])
+
+    seen: set[str] = set()
+    for encoding in encodings:
+        normalized = encoding.lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        try:
+            return raw.decode(encoding), encoding
+        except (LookupError, UnicodeDecodeError):
+            continue
+
+    fallback = preferred or "utf-8"
+    return raw.decode(fallback, errors="replace"), f"{fallback}/replace"
 
 
 def parse_window_geometry(geometry: str) -> tuple[int, int] | None:
@@ -792,19 +818,21 @@ class AvTextInputPadApp:
             ["cmd.exe", "/c", str(batch_path)],
             cwd=str(self.runtime_paths.base_dir),
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
         )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
-        self.logger.log(f"[RUN] mode={mode} rc={proc.returncode} elapsed_ms={elapsed_ms}")
+        stdout_text, stdout_encoding = decode_console_bytes(proc.stdout or b"")
+        stderr_text, stderr_encoding = decode_console_bytes(proc.stderr or b"")
+        self.logger.log(
+            f"[RUN] mode={mode} rc={proc.returncode} elapsed_ms={elapsed_ms} "
+            f"stdout_encoding={stdout_encoding} stderr_encoding={stderr_encoding}"
+        )
         self.queue.put(
             (
                 "convert_done",
                 mode,
                 proc.returncode,
-                proc.stdout,
-                proc.stderr,
+                stdout_text,
+                stderr_text,
                 elapsed_ms,
             )
         )
@@ -954,18 +982,37 @@ class SmokeTestRunner:
             return False
         return True
 
+    def check_notice_text(self, mode: str) -> bool:
+        notice = self.app.notice_var.get().strip()
+        if not notice:
+            self.fail(f"{mode} notice empty")
+            return False
+        if ("変換完了:" not in notice) and ("出力完了:" not in notice):
+            self.fail(f"{mode} notice unexpected")
+            return False
+        if "�" in notice:
+            self.fail(f"{mode} notice mojibake")
+            return False
+        return True
+
     def check_title_and_actress(self) -> None:
         if not self.check_result_updated("title_and_actress"):
+            return
+        if not self.check_notice_text("title_and_actress"):
             return
         self.start_conversion_and_wait("title_only", self.check_title_only)
 
     def check_title_only(self) -> None:
         if not self.check_result_updated("title_only"):
             return
+        if not self.check_notice_text("title_only"):
+            return
         self.start_conversion_and_wait("no_title", self.check_no_title)
 
     def check_no_title(self) -> None:
         if not self.check_result_updated("no_title"):
+            return
+        if not self.check_notice_text("no_title"):
             return
         self.app.copy_result()
         self.root.after(300, self.check_clipboard)
