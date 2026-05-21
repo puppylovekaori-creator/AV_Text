@@ -199,6 +199,10 @@ function normalizeLocateQuery(text) {
   return String(text || "").replace(/ +/g, " ").trim();
 }
 
+function normalizeActressText(text) {
+  return String(text || "").replace(/ +/g, "").trim();
+}
+
 function isLocateCodeText(text) {
   return ASCII_PRINTABLE_PATTERN.test(text) && ASCII_ALNUM_PATTERN.test(text);
 }
@@ -207,9 +211,20 @@ function classifySelectedText(raw) {
   const text = normalizeSelectedText(raw);
   if (!text) return null;
   const locateText = normalizeLocateQuery(text);
+  const actressText = normalizeActressText(text);
   if (!locateText) return null;
 
   if (text.includes(" ")) {
+    if (!ASCII_ALNUM_PATTERN.test(text) && actressText.length <= MAX_LEN) {
+      return {
+        displayText: actressText,
+        requestText: actressText,
+        kind: "check_actress",
+        canRegister: true,
+        locateFallbackText: locateText
+      };
+    }
+
     return {
       displayText: text,
       requestText: locateText,
