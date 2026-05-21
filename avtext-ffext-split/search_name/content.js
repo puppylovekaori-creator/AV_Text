@@ -19,6 +19,8 @@ let debounceTimer = null;
 // 表示中の対象名（クリック登録の誤爆防止）
 let currentName = "";
 let currentCheckKind = "";
+let currentLocateFallbackText = "";
+let currentCanRegister = false;
 
 // 直近 req_id（古い返事で上書きしないため）
 let lastReqIdCheck = 0;
@@ -66,7 +68,7 @@ function makeOverlay() {
   overlayBtn.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!currentName || currentCheckKind !== "check_actress") return;
+    if (!currentName || !currentCanRegister) return;
     showLoading(`登録中: ${currentName}`);
     browser.runtime.sendMessage({ type: "register_actress", text: currentName }).catch(() => {});
   }, true);
@@ -82,6 +84,8 @@ function hideOverlay() {
   overlayBtn.style.display = "none";
   currentName = "";
   currentCheckKind = "";
+  currentLocateFallbackText = "";
+  currentCanRegister = false;
 }
 
 function showOverlayAt(rect) {
@@ -134,10 +138,10 @@ function showRegistered(name, hasAlias = false) {
   overlayBtn.style.display = "none";
 }
 
-function showUnregistered(name) {
+function showUnregistered(name, canRegister = true) {
   setOverlayText(`未登録: ${name}`);
   setOverlayTooltip("");
-  overlayBtn.style.display = "inline-block";
+  overlayBtn.style.display = canRegister ? "inline-block" : "none";
 }
 
 function getLeafName(pathText) {
@@ -184,11 +188,15 @@ function normalizeSelectedText(raw) {
   s = s.replace(/^[、，。．・]+/, "");
   s = s.replace(/[、，。．・]+$/, "");
 
-  // 改行やタブが混じっていたら「複数語扱い」で捨てる（IN対応不要）
-  if (/[ \t\r\n\u3000]/.test(s)) return "";
+  // 改行やタブは対象外。半角スペースは locate 用に残す。
+  if (/[\t\r\n\u3000]/.test(s)) return "";
 
   if (s.length === 0) return "";
   return s;
+}
+
+function normalizeLocateQuery(text) {
+  return String(text || "").replace(/ +/g, " ").trim();
 }
 
 function isLocateCodeText(text) {
@@ -198,16 +206,46 @@ function isLocateCodeText(text) {
 function classifySelectedText(raw) {
   const text = normalizeSelectedText(raw);
   if (!text) return null;
+  const locateText = normalizeLocateQuery(text);
+  if (!locateText) return null;
+
+  if (text.includes(" ")) {
+    return {
+      displayText: text,
+      requestText: locateText,
+      kind: "check_locate_exists",
+      canRegister: false,
+      locateFallbackText: ""
+    };
+  }
 
   if (isLocateCodeText(text)) {
-    return { text, kind: "check_locate_exists" };
+    return {
+      displayText: text,
+      requestText: text,
+      kind: "check_locate_exists",
+      canRegister: false,
+      locateFallbackText: ""
+    };
   }
 
   if (text.length > MAX_LEN) {
-    return { text, kind: "check_locate_exists" };
+    return {
+      displayText: text,
+      requestText: locateText,
+      kind: "check_locate_exists",
+      canRegister: false,
+      locateFallbackText: ""
+    };
   }
 
-  return { text, kind: "check_actress" };
+  return {
+    displayText: text,
+    requestText: text,
+    kind: "check_actress",
+    canRegister: true,
+    locateFallbackText: locateText
+  };
 }
 
 function scheduleCheck() {
@@ -235,16 +273,18 @@ function runCheckNow() {
   showOverlayAt(rect);
 
   // 同じ選択に対して連打しない
-  const key = `${classified.kind}|${classified.text}|${Math.round(rect.left)}|${Math.round(rect.top)}|${Math.round(rect.width)}|${Math.round(rect.height)}`;
+  const key = `${classified.kind}|${classified.requestText}|${Math.round(rect.left)}|${Math.round(rect.top)}|${Math.round(rect.width)}|${Math.round(rect.height)}`;
   if (key === lastSelectionKey) return;
 
   lastSelectionKey = key;
-  currentName = classified.text;
+  currentName = classified.displayText;
   currentCheckKind = classified.kind;
+  currentLocateFallbackText = classified.locateFallbackText || "";
+  currentCanRegister = !!classified.canRegister;
   showLoading(classified.kind === "check_locate_exists" ? "ファイル確認中..." : "判定中...");
 
-  lastSentText = classified.text;
-  browser.runtime.sendMessage({ type: classified.kind, text: classified.text }).catch(() => {});
+  lastSentText = classified.requestText;
+  browser.runtime.sendMessage({ type: classified.kind, text: classified.requestText }).catch(() => {});
 }
 
 document.addEventListener("selectionchange", () => {
@@ -279,7 +319,13 @@ browser.runtime.onMessage.addListener((message) => {
     const hasAlias = !!payload.has_alias;
     const displayName = payload.display_name || currentName;
     if (found) showRegistered(displayName, hasAlias);
-    else showUnregistered(currentName);
+    else if (currentLocateFallbackText) {
+      currentCheckKind = "check_locate_exists";
+      showLoading("ファイル確認中...");
+      browser.runtime.sendMessage({ type: "check_locate_exists", text: currentLocateFallbackText }).catch(() => {});
+    } else {
+      showUnregistered(currentName, currentCanRegister);
+    }
     return;
   }
 
@@ -295,6 +341,10 @@ browser.runtime.onMessage.addListener((message) => {
 
     const count = Number.isFinite(payload.count) ? payload.count : (payload.found ? 1 : 0);
     if (payload.found) showLocateFound(currentName, count, payload.first_result || "");
+    else if (currentCanRegister) {
+      currentCheckKind = "check_actress";
+      showUnregistered(currentName, true);
+    }
     else showLocateMissing(currentName, count);
     return;
   }
