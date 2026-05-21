@@ -22,7 +22,7 @@ let currentCheckKind = "";
 let currentLocateFallbackText = "";
 let currentCanRegister = false;
 
-// 直近 req_id（古い返事で上書きしないため）
+// content 側の要求トークン（古い返事を捨てるため）
 let lastReqIdCheck = 0;
 let lastReqIdRegister = 0;
 
@@ -69,8 +69,9 @@ function makeOverlay() {
     e.preventDefault();
     e.stopPropagation();
     if (!currentName || !currentCanRegister) return;
+    const reqId = ++lastReqIdRegister;
     showLoading(`登録中: ${currentName}`);
-    browser.runtime.sendMessage({ type: "register_actress", text: currentName }).catch(() => {});
+    browser.runtime.sendMessage({ type: "register_actress", text: currentName, client_req_id: reqId }).catch(() => {});
   }, true);
 
   overlay.appendChild(overlayBtn);
@@ -292,6 +293,7 @@ function runCheckNow() {
   if (key === lastSelectionKey) return;
 
   lastSelectionKey = key;
+  const reqId = ++lastReqIdCheck;
   currentName = classified.displayText;
   currentCheckKind = classified.kind;
   currentLocateFallbackText = classified.locateFallbackText || "";
@@ -299,7 +301,7 @@ function runCheckNow() {
   showLoading(classified.kind === "check_locate_exists" ? "ファイル確認中..." : "判定中...");
 
   lastSentText = classified.requestText;
-  browser.runtime.sendMessage({ type: classified.kind, text: classified.requestText }).catch(() => {});
+  browser.runtime.sendMessage({ type: classified.kind, text: classified.requestText, client_req_id: reqId }).catch(() => {});
 }
 
 document.addEventListener("selectionchange", () => {
@@ -316,11 +318,11 @@ browser.runtime.onMessage.addListener((message) => {
   if (!message || message.type !== "native_result") return;
 
   const kind = message.kind;
+  const clientReqId = Number(message.client_req_id || 0);
   const payload = message.payload || {};
 
   if (kind === "check_actress") {
-    // 古い返事で上書きしない（background 側で req_id は振っているが content 側は見えない）
-    // なので currentName と一致しない返事は捨てる
+    if (!clientReqId || clientReqId !== lastReqIdCheck) return;
     if (!currentName || currentCheckKind !== "check_actress") return;
 
     if (payload.status !== "ok") {
@@ -337,7 +339,7 @@ browser.runtime.onMessage.addListener((message) => {
     else if (currentLocateFallbackText) {
       currentCheckKind = "check_locate_exists";
       showLoading("ファイル確認中...");
-      browser.runtime.sendMessage({ type: "check_locate_exists", text: currentLocateFallbackText }).catch(() => {});
+      browser.runtime.sendMessage({ type: "check_locate_exists", text: currentLocateFallbackText, client_req_id: clientReqId }).catch(() => {});
     } else {
       showUnregistered(currentName, currentCanRegister);
     }
@@ -345,6 +347,7 @@ browser.runtime.onMessage.addListener((message) => {
   }
 
   if (kind === "check_locate_exists") {
+    if (!clientReqId || clientReqId !== lastReqIdCheck) return;
     if (!currentName || currentCheckKind !== "check_locate_exists") return;
 
     if (payload.status !== "ok") {
@@ -369,6 +372,7 @@ browser.runtime.onMessage.addListener((message) => {
   }
 
   if (kind === "register_actress") {
+    if (!clientReqId || clientReqId !== lastReqIdRegister) return;
     if (!currentName || currentCheckKind !== "check_actress") return;
 
     if (payload.status !== "ok") {

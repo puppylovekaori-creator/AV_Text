@@ -7,7 +7,7 @@ const NATIVE_APP = "avtext_helper";
 let port = null;
 let nextReqId = 1;
 
-// req_id -> { tabId, kind }
+// req_id -> { tabId, kind, clientReqId }
 const pending = new Map();
 
 function log(...args) {
@@ -63,6 +63,7 @@ function onNativeMessage(msg) {
       type: "native_result",
       kind: p.kind,
       req_id: reqId,
+      client_req_id: p.clientReqId,
       payload: msg
     }).catch(() => {});
   } catch (e) {
@@ -77,8 +78,9 @@ browser.runtime.onMessage.addListener((message, sender) => {
 
   if (message.type === "check_actress") {
     const text = message.text || "";
+    const clientReqId = Number(message.client_req_id || 0);
     const reqId = nextReqId++;
-    pending.set(reqId, { tabId, kind: "check_actress" });
+    pending.set(reqId, { tabId, kind: "check_actress", clientReqId });
 
     const ok = postToNative({ target: "check_actress", text, req_id: reqId });
     if (!ok) {
@@ -87,6 +89,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
         type: "native_result",
         kind: "check_actress",
         req_id: reqId,
+        client_req_id: clientReqId,
         payload: { status: "error", target: "check_actress", req_id: reqId, error: "native host not available" }
       }).catch(() => {});
     }
@@ -95,8 +98,9 @@ browser.runtime.onMessage.addListener((message, sender) => {
 
   if (message.type === "check_locate_exists") {
     const text = message.text || "";
+    const clientReqId = Number(message.client_req_id || 0);
     const reqId = nextReqId++;
-    pending.set(reqId, { tabId, kind: "check_locate_exists" });
+    pending.set(reqId, { tabId, kind: "check_locate_exists", clientReqId });
 
     const ok = postToNative({ target: "check_locate_exists", text, req_id: reqId });
     if (!ok) {
@@ -105,6 +109,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
         type: "native_result",
         kind: "check_locate_exists",
         req_id: reqId,
+        client_req_id: clientReqId,
         payload: { status: "error", target: "check_locate_exists", req_id: reqId, error: "native host not available" }
       }).catch(() => {});
     }
@@ -113,8 +118,9 @@ browser.runtime.onMessage.addListener((message, sender) => {
 
   if (message.type === "register_actress") {
     const text = message.text || "";
+    const clientReqId = Number(message.client_req_id || 0);
     const reqId = nextReqId++;
-    pending.set(reqId, { tabId, kind: "register_actress" });
+    pending.set(reqId, { tabId, kind: "register_actress", clientReqId });
 
     const ok = postToNative({ target: "register_actress", text, req_id: reqId });
     if (!ok) {
@@ -123,6 +129,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
         type: "native_result",
         kind: "register_actress",
         req_id: reqId,
+        client_req_id: clientReqId,
         payload: { status: "error", target: "register_actress", req_id: reqId, error: "native host not available" }
       }).catch(() => {});
     }
