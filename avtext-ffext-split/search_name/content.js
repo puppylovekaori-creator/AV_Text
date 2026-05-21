@@ -151,17 +151,17 @@ function getLeafName(pathText) {
   return parts.length > 0 ? (parts[parts.length - 1] || "") : normalized;
 }
 
-function showLocateFound(text, count, firstResult) {
+function showLocateFound(text, count, firstResult, canRegister = false) {
   const fileName = getLeafName(firstResult) || text;
   setOverlayText(`${fileName} (${count})`);
   setOverlayTooltip(firstResult || "");
-  overlayBtn.style.display = "none";
+  overlayBtn.style.display = canRegister ? "inline-block" : "none";
 }
 
-function showLocateMissing(text, count = 0) {
+function showLocateMissing(text, count = 0, canRegister = false) {
   setOverlayText(`ファイルなし(${count}): ${text}`);
   setOverlayTooltip("");
-  overlayBtn.style.display = "none";
+  overlayBtn.style.display = canRegister ? "inline-block" : "none";
 }
 
 function getSelectionRect() {
@@ -348,17 +348,21 @@ browser.runtime.onMessage.addListener((message) => {
     if (!currentName || currentCheckKind !== "check_locate_exists") return;
 
     if (payload.status !== "ok") {
+      if (currentCanRegister) currentCheckKind = "check_actress";
       setOverlayText(`確認失敗: ${currentName}`);
       setOverlayTooltip("");
-      overlayBtn.style.display = "none";
+      overlayBtn.style.display = currentCanRegister ? "inline-block" : "none";
       return;
     }
 
     const count = Number.isFinite(payload.count) ? payload.count : (payload.found ? 1 : 0);
-    if (payload.found) showLocateFound(currentName, count, payload.first_result || "");
+    if (payload.found) {
+      if (currentCanRegister) currentCheckKind = "check_actress";
+      showLocateFound(currentName, count, payload.first_result || "", currentCanRegister);
+    }
     else if (currentCanRegister) {
       currentCheckKind = "check_actress";
-      showUnregistered(currentName, true);
+      showLocateMissing(currentName, count, true);
     }
     else showLocateMissing(currentName, count);
     return;
