@@ -57,6 +57,8 @@ MODE_SPECS = {
 }
 
 AUTO_COPY_MODES = {"title_and_actress", "title_only"}
+CLIBOR_HISTORY_COPY_MODE = "no_title"
+CLIBOR_HISTORY_COPY_INTERVAL_MS = 220
 
 MONITORED_FILES = {
     "title": "title.txt",
@@ -282,6 +284,16 @@ def decode_console_bytes(raw: bytes) -> tuple[str, str]:
     return raw.decode(fallback, errors="replace"), f"{fallback}/replace"
 
 
+def build_clipboard_history_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for raw_line in (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        lines.append(line)
+    return lines
+
+
 def parse_window_geometry(geometry: str) -> tuple[int, int] | None:
     raw = (geometry or "").strip()
     if not raw or "x" not in raw:
@@ -366,8 +378,14 @@ class AvTextInputPadApp:
         self.save_after_id: str | None = None
         self.reload_after_id: str | None = None
         self.async_after_id: str | None = None
+        self.clipboard_history_after_id: str | None = None
         self.active_mode: str | None = None
         self.is_applying_ui = False
+        self.clipboard_history_copy_active = False
+        self.clipboard_history_lines: list[str] = []
+        self.clipboard_history_index = 0
+        self.clipboard_history_mode_label = ""
+        self.clipboard_history_elapsed_ms = 0
 
         self.file_signatures: dict[str, FileSignature] = {
             key: FileSignature(False, 0, 0) for key in MONITORED_FILES
@@ -968,6 +986,73 @@ class AvTextInputPadApp:
         self.root.clipboard_append(text)
         self.root.update_idletasks()
 
+    def cancel_clipboard_history_copy(self) -> None:
+        if self.clipboard_history_after_id is not None:
+            self.root.after_cancel(self.clipboard_history_after_id)
+            self.clipboard_history_after_id = None
+        self.clipboard_history_copy_active = False
+        self.clipboard_history_lines = []
+        self.clipboard_history_index = 0
+        self.clipboard_history_mode_label = ""
+        self.clipboard_history_elapsed_ms = 0
+
+    def start_clipboard_history_copy(self, mode_label: str, elapsed_ms: int, lines: list[str]) -> bool:
+        prepared = [line for line in lines if line]
+        if not prepared:
+            return False
+
+        self.cancel_clipboard_history_copy()
+        self.clipboard_history_copy_active = True
+        self.clipboard_history_lines = prepared
+        self.clipboard_history_index = 0
+        self.clipboard_history_mode_label = mode_label
+        self.clipboard_history_elapsed_ms = elapsed_ms
+        self.enable_buttons(False)
+        self._run_clipboard_history_copy_step()
+        return True
+
+    def _run_clipboard_history_copy_step(self) -> None:
+        if not self.clipboard_history_copy_active:
+            return
+
+        total = len(self.clipboard_history_lines)
+        index = self.clipboard_history_index
+        if index >= total:
+            self.finish_clipboard_history_copy()
+            return
+
+        line = self.clipboard_history_lines[index]
+        self.copy_text_to_clipboard(line)
+        self.clipboard_history_index += 1
+        self.set_status(
+            "Clibor履歴送信中",
+            f"{self.clipboard_history_index}/{total} 行をコピー中",
+            busy=False,
+        )
+
+        if self.clipboard_history_index >= total:
+            self.finish_clipboard_history_copy()
+            return
+
+        self.clipboard_history_after_id = self.root.after(
+            CLIBOR_HISTORY_COPY_INTERVAL_MS,
+            self._run_clipboard_history_copy_step,
+        )
+
+    def finish_clipboard_history_copy(self) -> None:
+        total = len(self.clipboard_history_lines)
+        mode_label = self.clipboard_history_mode_label
+        elapsed_ms = self.clipboard_history_elapsed_ms
+        self.cancel_clipboard_history_copy()
+        self.enable_buttons(True)
+        self.select_tab("result")
+        self.focus_copy_button()
+        self.set_status(
+            "完了",
+            f"{mode_label} 完了 ({elapsed_ms} ms) / Clibor履歴へ {total} 行送信済み",
+            busy=False,
+        )
+
     def schedule_async_pump(self) -> None:
         if self.async_after_id is not None:
             self.root.after_cancel(self.async_after_id)
@@ -988,24 +1073,38 @@ class AvTextInputPadApp:
         if kind == "convert_done":
             _, mode, returncode, stdout, stderr, elapsed_ms = item
             self.active_mode = None
-            self.enable_buttons(True)
             self._reload_single_key("result", from_watch=False)
             if returncode == 0:
                 auto_copied = False
+                history_copy_started = False
                 if mode in AUTO_COPY_MODES:
                     result_text = self.get_result_text()
                     if result_text.strip():
                         self.copy_text_to_clipboard(result_text)
                         auto_copied = True
+                elif mode == CLIBOR_HISTORY_COPY_MODE:
+                    history_lines = build_clipboard_history_lines(self.get_result_text())
+                    history_copy_started = self.start_clipboard_history_copy(
+                        MODE_SPECS[mode]["label"],
+                        elapsed_ms,
+                        history_lines,
+                    )
 
                 detail = f"{MODE_SPECS[mode]['label']} 完了 ({elapsed_ms} ms)"
                 if auto_copied:
                     detail += " / 自動コピー済み"
-                self.set_status("完了", detail, busy=False)
                 self.set_notice(shorten_detail(stdout) if stdout else "")
                 self.select_tab("result")
                 self.focus_copy_button()
+                if history_copy_started:
+                    self.set_notice(
+                        f"{shorten_detail(stdout) if stdout else ''} / Clibor履歴へ {len(history_lines)} 行送信中"
+                    )
+                else:
+                    self.set_status("完了", detail, busy=False)
+                    self.enable_buttons(True)
             else:
+                self.enable_buttons(True)
                 combined = stdout.strip() or stderr.strip() or f"exit={returncode}"
                 detail = f"{MODE_SPECS[mode]['label']} 失敗"
                 self.set_status("エラー", detail, busy=False, error=True)
@@ -1022,6 +1121,9 @@ class AvTextInputPadApp:
     def start_conversion(self, mode: str) -> None:
         if self.active_mode is not None:
             self.set_notice("変換は同時実行できません。")
+            return
+        if self.clipboard_history_copy_active:
+            self.set_notice("Clibor履歴送信中です。完了後に次の変換を実行してください。")
             return
 
         missing = self.runtime_paths.validate_batches()
@@ -1085,6 +1187,7 @@ class AvTextInputPadApp:
     def on_close(self) -> None:
         try:
             self.logger.log(f"[LIFECYCLE] on_close pid={os.getpid()}")
+            self.cancel_clipboard_history_copy()
             self.flush_save_now(reason="終了前保存")
             self.persist_settings()
         finally:
@@ -1180,7 +1283,7 @@ class SmokeTestRunner:
         self.last_result_signature = safe_signature(self.runtime_dir / MONITORED_FILES["result"])
         self.app.start_conversion(mode)
         self.wait_until(
-            lambda: self.app.active_mode is None,
+            lambda: (self.app.active_mode is None) and (not self.app.clipboard_history_copy_active),
             callback,
             timeout_ms=30000,
             timeout_message=f"{mode} timeout",
@@ -1293,7 +1396,17 @@ class SmokeTestRunner:
             return
         if not self.check_notice_text("no_title"):
             return
-        if not self.check_clipboard_unchanged("no_title"):
+        history_lines = build_clipboard_history_lines(self.app.get_result_text())
+        if not history_lines:
+            self.fail("no_title history lines empty")
+            return
+        try:
+            clip = self.root.clipboard_get().strip()
+        except Exception as exc:
+            self.fail(f"no_title clipboard read failed: {exc!r}")
+            return
+        if clip != history_lines[-1]:
+            self.fail("no_title history clipboard mismatch")
             return
         self.app.copy_result()
         self.root.after(300, self.check_clipboard)
