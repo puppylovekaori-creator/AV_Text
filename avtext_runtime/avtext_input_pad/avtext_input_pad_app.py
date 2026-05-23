@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog
@@ -58,7 +59,8 @@ MODE_SPECS = {
 
 AUTO_COPY_MODES = {"title_and_actress", "title_only"}
 CLIBOR_HISTORY_COPY_MODE = "no_title"
-CLIBOR_HISTORY_COPY_INTERVAL_MS = 220
+DEFAULT_CLIBOR_HISTORY_COPY_INTERVAL_MS = 700
+CLIBOR_HISTORY_COPY_MARGIN_MS = 150
 
 MONITORED_FILES = {
     "title": "title.txt",
@@ -294,6 +296,70 @@ def build_clipboard_history_lines(text: str) -> list[str]:
     return lines
 
 
+def resolve_clibor_config_path() -> Path | None:
+    if os.name != "nt":
+        return None
+
+    command = (
+        "$p = Get-Process Clibor -ErrorAction SilentlyContinue | "
+        "Select-Object -First 1 -ExpandProperty Path; "
+        "if ($p) { Join-Path (Split-Path $p -Parent) 'Clibor.xml' }"
+    )
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", command],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=3,
+        )
+    except Exception:
+        return None
+
+    candidate = (proc.stdout or "").strip().splitlines()
+    if not candidate:
+        return None
+
+    path = Path(candidate[0].strip())
+    return path if path.exists() else None
+
+
+def resolve_clibor_history_copy_interval_ms(logger: SimpleLogger | None = None) -> int:
+    interval = DEFAULT_CLIBOR_HISTORY_COPY_INTERVAL_MS
+    config_path = resolve_clibor_config_path()
+    if config_path is None:
+        if logger is not None:
+            logger.log(f"[INFO] Clibor config not found. use default interval={interval}ms")
+        return interval
+
+    try:
+        raw = config_path.read_text(encoding="utf-16")
+        root = ET.fromstring(raw)
+        clipignore_text = (root.findtext("./CLIBOR/CLIPIGNORE") or "").strip()
+        clipdelay_text = (root.findtext("./CLIBOR/CLIPDELAY") or "").strip()
+        clipignore = int(clipignore_text or "0")
+        clipdelay = int(clipdelay_text or "0")
+        interval = max(
+            interval,
+            clipignore + CLIBOR_HISTORY_COPY_MARGIN_MS,
+            clipdelay + CLIBOR_HISTORY_COPY_MARGIN_MS,
+        )
+        if logger is not None:
+            logger.log(
+                f"[INFO] Clibor interval resolved: interval={interval}ms "
+                f"clipignore={clipignore} clipdelay={clipdelay} path={config_path}"
+            )
+        return interval
+    except Exception as exc:
+        if logger is not None:
+            logger.log(
+                f"[WARN] failed to read Clibor config. use default interval={interval}ms "
+                f"path={config_path} error={exc!r}"
+            )
+        return interval
+
+
 def parse_window_geometry(geometry: str) -> tuple[int, int] | None:
     raw = (geometry or "").strip()
     if not raw or "x" not in raw:
@@ -386,6 +452,7 @@ class AvTextInputPadApp:
         self.clipboard_history_index = 0
         self.clipboard_history_mode_label = ""
         self.clipboard_history_elapsed_ms = 0
+        self.clibor_history_copy_interval_ms: int | None = None
 
         self.file_signatures: dict[str, FileSignature] = {
             key: FileSignature(False, 0, 0) for key in MONITORED_FILES
@@ -1001,6 +1068,9 @@ class AvTextInputPadApp:
         if not prepared:
             return False
 
+        if self.clibor_history_copy_interval_ms is None:
+            self.clibor_history_copy_interval_ms = resolve_clibor_history_copy_interval_ms(self.logger)
+
         self.cancel_clipboard_history_copy()
         self.clipboard_history_copy_active = True
         self.clipboard_history_lines = prepared
@@ -1008,7 +1078,13 @@ class AvTextInputPadApp:
         self.clipboard_history_mode_label = mode_label
         self.clipboard_history_elapsed_ms = elapsed_ms
         self.enable_buttons(False)
-        self._run_clipboard_history_copy_step()
+        interval_ms = self.clibor_history_copy_interval_ms or DEFAULT_CLIBOR_HISTORY_COPY_INTERVAL_MS
+        self.set_status(
+            "Clibor履歴送信待ち",
+            f"1/{len(prepared)} 行目を送信準備中",
+            busy=False,
+        )
+        self.clipboard_history_after_id = self.root.after(interval_ms, self._run_clipboard_history_copy_step)
         return True
 
     def _run_clipboard_history_copy_step(self) -> None:
@@ -1034,10 +1110,8 @@ class AvTextInputPadApp:
             self.finish_clipboard_history_copy()
             return
 
-        self.clipboard_history_after_id = self.root.after(
-            CLIBOR_HISTORY_COPY_INTERVAL_MS,
-            self._run_clipboard_history_copy_step,
-        )
+        interval_ms = self.clibor_history_copy_interval_ms or DEFAULT_CLIBOR_HISTORY_COPY_INTERVAL_MS
+        self.clipboard_history_after_id = self.root.after(interval_ms, self._run_clipboard_history_copy_step)
 
     def finish_clipboard_history_copy(self) -> None:
         total = len(self.clipboard_history_lines)
