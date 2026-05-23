@@ -56,6 +56,8 @@ MODE_SPECS = {
     },
 }
 
+AUTO_COPY_MODES = {"title_and_actress", "title_only"}
+
 MONITORED_FILES = {
     "title": "title.txt",
     "actress": "actress.txt",
@@ -961,6 +963,11 @@ class AvTextInputPadApp:
             return ""
         return self.result_widget.get("1.0", "end-1c")
 
+    def copy_text_to_clipboard(self, text: str) -> None:
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.root.update_idletasks()
+
     def schedule_async_pump(self) -> None:
         if self.async_after_id is not None:
             self.root.after_cancel(self.async_after_id)
@@ -984,7 +991,16 @@ class AvTextInputPadApp:
             self.enable_buttons(True)
             self._reload_single_key("result", from_watch=False)
             if returncode == 0:
+                auto_copied = False
+                if mode in AUTO_COPY_MODES:
+                    result_text = self.get_result_text()
+                    if result_text.strip():
+                        self.copy_text_to_clipboard(result_text)
+                        auto_copied = True
+
                 detail = f"{MODE_SPECS[mode]['label']} 完了 ({elapsed_ms} ms)"
+                if auto_copied:
+                    detail += " / 自動コピー済み"
                 self.set_status("完了", detail, busy=False)
                 self.set_notice(shorten_detail(stdout) if stdout else "")
                 self.select_tab("result")
@@ -1055,9 +1071,7 @@ class AvTextInputPadApp:
 
     def copy_result(self) -> None:
         text = self.get_result_text()
-        self.root.clipboard_clear()
-        self.root.clipboard_append(text)
-        self.root.update_idletasks()
+        self.copy_text_to_clipboard(text)
         self.set_status("完了", "変換結果をクリップボードへコピーしました", busy=False)
 
     def open_output_file(self) -> None:
@@ -1087,6 +1101,7 @@ class SmokeTestRunner:
         self.temp_values: dict[str, str] = {}
         self.last_result_signature = FileSignature(False, 0, 0)
         self.failures: list[str] = []
+        self.manual_clipboard_marker = "__avtext_manual_copy_marker__"
 
     def start(self) -> None:
         for key, name in MONITORED_FILES.items():
@@ -1223,12 +1238,39 @@ class SmokeTestRunner:
             return False
         return True
 
+    def check_auto_clipboard(self, mode: str) -> bool:
+        try:
+            clip = self.root.clipboard_get().strip()
+        except Exception as exc:
+            self.fail(f"{mode} auto clipboard read failed: {exc!r}")
+            return False
+        if clip != self.app.get_result_text().strip():
+            self.fail(f"{mode} auto clipboard mismatch")
+            return False
+        return True
+
+    def set_manual_clipboard_marker(self) -> None:
+        self.app.copy_text_to_clipboard(self.manual_clipboard_marker)
+
+    def check_clipboard_unchanged(self, mode: str) -> bool:
+        try:
+            clip = self.root.clipboard_get().strip()
+        except Exception as exc:
+            self.fail(f"{mode} clipboard read failed: {exc!r}")
+            return False
+        if clip != self.manual_clipboard_marker:
+            self.fail(f"{mode} clipboard changed unexpectedly")
+            return False
+        return True
+
     def check_title_and_actress(self) -> None:
         if not self.check_result_updated("title_and_actress"):
             return
         if not self.check_copy_button_focus("title_and_actress"):
             return
         if not self.check_notice_text("title_and_actress"):
+            return
+        if not self.check_auto_clipboard("title_and_actress"):
             return
         self.start_conversion_and_wait("title_only", self.check_title_only)
 
@@ -1239,6 +1281,9 @@ class SmokeTestRunner:
             return
         if not self.check_notice_text("title_only"):
             return
+        if not self.check_auto_clipboard("title_only"):
+            return
+        self.set_manual_clipboard_marker()
         self.start_conversion_and_wait("no_title", self.check_no_title)
 
     def check_no_title(self) -> None:
@@ -1247,6 +1292,8 @@ class SmokeTestRunner:
         if not self.check_copy_button_focus("no_title"):
             return
         if not self.check_notice_text("no_title"):
+            return
+        if not self.check_clipboard_unchanged("no_title"):
             return
         self.app.copy_result()
         self.root.after(300, self.check_clipboard)
