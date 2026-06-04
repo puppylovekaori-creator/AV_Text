@@ -577,22 +577,12 @@ def _store_locate_result(
         LOCATE_QUERY_CACHE.popitem(last=False)
 
 
-def _check_locate_exists(query: str) -> tuple[bool, int, str]:
-    query = (query or "").strip()
-    if not query:
-        return False, 0, ""
-
-    locate_exe = _get_locate_exe_path()
-    db_path = _get_locate_db_path()
-    cache_key = _get_locate_cache_key(query, db_path)
-    cached = _get_cached_locate_result(cache_key)
-    if cached is not None:
-        return cached
-
-    creationflags = 0
-    if os.name == "nt":
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-
+def _run_locate_query_once(
+    locate_exe: Path,
+    db_path: Path,
+    query: str,
+    creationflags: int,
+) -> tuple[int, str, float]:
     start = time.perf_counter()
     process = subprocess.Popen(
         [str(locate_exe), "-d", str(db_path), "--", query],
@@ -645,11 +635,53 @@ def _check_locate_exists(query: str) -> tuple[bool, int, str]:
     if returncode not in (0, 1) and stderr_text.strip():
         raise RuntimeError(f"Locate32 query failed: {stderr_text.strip()}")
 
+    return count, first_result, elapsed_ms
+
+
+def _check_locate_exists(query: str) -> tuple[bool, int, str]:
+    query = (query or "").strip()
+    if not query:
+        return False, 0, ""
+
+    locate_exe = _get_locate_exe_path()
+    db_path = _get_locate_db_path()
+    cache_key = _get_locate_cache_key(query, db_path)
+    cached = _get_cached_locate_result(cache_key)
+    if cached is not None:
+        return cached
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    count, first_result, elapsed_ms = _run_locate_query_once(
+        locate_exe,
+        db_path,
+        query,
+        creationflags,
+    )
+    effective_query = query
+
+    if count == 0 and " " in query:
+        wildcard_query = "*".join(part for part in query.split(" ") if part)
+        if wildcard_query and wildcard_query != query:
+            wildcard_count, wildcard_first_result, wildcard_elapsed_ms = _run_locate_query_once(
+                locate_exe,
+                db_path,
+                wildcard_query,
+                creationflags,
+            )
+            if wildcard_count > 0:
+                count = wildcard_count
+                first_result = wildcard_first_result
+                elapsed_ms += wildcard_elapsed_ms
+                effective_query = wildcard_query
+
     found = count > 0
     _store_locate_result(cache_key, found, count, first_result)
     debug_log(
-        f"[INFO] check_locate_exists query={query!r} found={found} count={count} "
-        f"elapsed_ms={elapsed_ms:.3f} db={db_path}"
+        f"[INFO] check_locate_exists query={query!r} effective_query={effective_query!r} "
+        f"found={found} count={count} elapsed_ms={elapsed_ms:.3f} db={db_path}"
     )
     return found, count, first_result
 

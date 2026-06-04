@@ -154,7 +154,7 @@ function getLeafName(pathText) {
 
 function showLocateFound(text, count, firstResult, canRegister = false) {
   const fileName = getLeafName(firstResult) || text;
-  setOverlayText(`${fileName} (${count})`);
+  setOverlayText(`${count}件 ${fileName}`);
   setOverlayTooltip(firstResult || "");
   overlayBtn.style.display = canRegister ? "inline-block" : "none";
 }

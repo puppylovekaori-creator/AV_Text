@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "AV Text Checker",
-  "version": "1.10",
+  "version": "1.11",
   "description": "Check selected actress name via native host and show Registered/Unregistered overlay",
   "permissions": [
     "nativeMessaging"
