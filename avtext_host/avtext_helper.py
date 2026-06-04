@@ -61,7 +61,8 @@ LOCATE_DB_REG_PATH = r"Software\Update\Databases\1_default"
 LOCATE_DB_REG_VALUE = "ArchiveName"
 LOCATE_QUERY_TIMEOUT_SEC = 8.0
 LOCATE_QUERY_CACHE_MAX = 256
-LOCATE_QUERY_CACHE: "OrderedDict[tuple[str, str, int, int], tuple[bool, int, str]]" = OrderedDict()
+LOCATE_PREVIEW_LIMIT = 2
+LOCATE_QUERY_CACHE: "OrderedDict[tuple[str, str, str, int, int], tuple[bool, int, str, bool]]" = OrderedDict()
 
 # ---------- pyodbc ----------
 try:
@@ -553,12 +554,12 @@ def _get_locate_db_path() -> Path:
     return db_path
 
 
-def _get_locate_cache_key(query: str, db_path: Path) -> tuple[str, str, int, int]:
+def _get_locate_cache_key(query: str, db_path: Path, mode: str) -> tuple[str, str, str, int, int]:
     stat = db_path.stat()
-    return (query.casefold(), str(db_path), int(stat.st_mtime_ns), int(stat.st_size))
+    return (mode, query.casefold(), str(db_path), int(stat.st_mtime_ns), int(stat.st_size))
 
 
-def _get_cached_locate_result(cache_key: tuple[str, str, int, int]):
+def _get_cached_locate_result(cache_key: tuple[str, str, str, int, int]):
     if cache_key not in LOCATE_QUERY_CACHE:
         return None
     cached_value = LOCATE_QUERY_CACHE.pop(cache_key)
@@ -567,14 +568,24 @@ def _get_cached_locate_result(cache_key: tuple[str, str, int, int]):
 
 
 def _store_locate_result(
-    cache_key: tuple[str, str, int, int],
+    cache_key: tuple[str, str, str, int, int],
     found: bool,
     count: int,
     first_result: str,
+    count_exact: bool,
 ) -> None:
-    LOCATE_QUERY_CACHE[cache_key] = (found, count, first_result)
+    LOCATE_QUERY_CACHE[cache_key] = (found, count, first_result, count_exact)
     while len(LOCATE_QUERY_CACHE) > LOCATE_QUERY_CACHE_MAX:
         LOCATE_QUERY_CACHE.popitem(last=False)
+
+
+def _build_locate_cli_query(query: str) -> str:
+    normalized = " ".join(str(query or "").split())
+    if not normalized:
+        return ""
+    if " " not in normalized:
+        return normalized
+    return "*".join(part for part in normalized.split(" ") if part)
 
 
 def _run_locate_query_once(
@@ -582,10 +593,16 @@ def _run_locate_query_once(
     db_path: Path,
     query: str,
     creationflags: int,
+    max_results: int | None = None,
 ) -> tuple[int, str, float]:
+    args = [str(locate_exe), "-d", str(db_path)]
+    if max_results is not None and max_results > 0:
+        args.append(f"-ln:{int(max_results)}")
+    args.extend(["--", query])
+
     start = time.perf_counter()
     process = subprocess.Popen(
-        [str(locate_exe), "-d", str(db_path), "--", query],
+        args,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -645,7 +662,41 @@ def _check_locate_exists(query: str) -> tuple[bool, int, str]:
 
     locate_exe = _get_locate_exe_path()
     db_path = _get_locate_db_path()
-    cache_key = _get_locate_cache_key(query, db_path)
+    cache_key = _get_locate_cache_key(query, db_path, "count")
+    cached = _get_cached_locate_result(cache_key)
+    if cached is not None:
+        found, count, first_result, _count_exact = cached
+        return found, count, first_result
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    effective_query = _build_locate_cli_query(query)
+    count, first_result, elapsed_ms = _run_locate_query_once(
+        locate_exe,
+        db_path,
+        effective_query,
+        creationflags,
+    )
+
+    found = count > 0
+    _store_locate_result(cache_key, found, count, first_result, True)
+    debug_log(
+        f"[INFO] check_locate_exists query={query!r} effective_query={effective_query!r} "
+        f"found={found} count={count} elapsed_ms={elapsed_ms:.3f} db={db_path}"
+    )
+    return found, count, first_result
+
+
+def _check_locate_preview(query: str) -> tuple[bool, int, str, bool]:
+    query = (query or "").strip()
+    if not query:
+        return False, 0, "", True
+
+    locate_exe = _get_locate_exe_path()
+    db_path = _get_locate_db_path()
+    cache_key = _get_locate_cache_key(query, db_path, "preview")
     cached = _get_cached_locate_result(cache_key)
     if cached is not None:
         return cached
@@ -654,36 +705,23 @@ def _check_locate_exists(query: str) -> tuple[bool, int, str]:
     if os.name == "nt":
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+    effective_query = _build_locate_cli_query(query)
     count, first_result, elapsed_ms = _run_locate_query_once(
         locate_exe,
         db_path,
-        query,
+        effective_query,
         creationflags,
+        max_results=LOCATE_PREVIEW_LIMIT,
     )
-    effective_query = query
-
-    if count == 0 and " " in query:
-        wildcard_query = "*".join(part for part in query.split(" ") if part)
-        if wildcard_query and wildcard_query != query:
-            wildcard_count, wildcard_first_result, wildcard_elapsed_ms = _run_locate_query_once(
-                locate_exe,
-                db_path,
-                wildcard_query,
-                creationflags,
-            )
-            if wildcard_count > 0:
-                count = wildcard_count
-                first_result = wildcard_first_result
-                elapsed_ms += wildcard_elapsed_ms
-                effective_query = wildcard_query
-
     found = count > 0
-    _store_locate_result(cache_key, found, count, first_result)
+    count_exact = count < LOCATE_PREVIEW_LIMIT
+    _store_locate_result(cache_key, found, count, first_result, count_exact)
     debug_log(
-        f"[INFO] check_locate_exists query={query!r} effective_query={effective_query!r} "
-        f"found={found} count={count} elapsed_ms={elapsed_ms:.3f} db={db_path}"
+        f"[INFO] check_locate_preview query={query!r} effective_query={effective_query!r} "
+        f"found={found} count={count} count_exact={count_exact} "
+        f"elapsed_ms={elapsed_ms:.3f} db={db_path}"
     )
-    return found, count, first_result
+    return found, count, first_result, count_exact
 
 
 def _build_display_name(name: str, rows) -> str:
@@ -845,6 +883,23 @@ def handle_message(msg: dict) -> dict:
             }
         except Exception as e:
             debug_log(f"[WARN] check_actress failed: {e!r}")
+            return {"status": "error", "target": target, "req_id": req_id, "error": str(e)}
+
+    if target == "check_locate_preview":
+        try:
+            debug_log("[INFO] check_locate_preview start")
+            found, count, first_result, count_exact = _check_locate_preview(text)
+            return {
+                "status": "ok",
+                "target": target,
+                "req_id": req_id,
+                "found": bool(found),
+                "count": int(count),
+                "count_exact": bool(count_exact),
+                "first_result": first_result,
+            }
+        except Exception as e:
+            debug_log(f"[WARN] check_locate_preview failed: {e!r}")
             return {"status": "error", "target": target, "req_id": req_id, "error": str(e)}
 
     if target == "check_locate_exists":

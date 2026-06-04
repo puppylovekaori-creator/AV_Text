@@ -71,6 +71,23 @@ function onNativeMessage(msg) {
   }
 }
 
+function forwardNativeRequest(tabId, kind, target, text, clientReqId) {
+  const reqId = nextReqId++;
+  pending.set(reqId, { tabId, kind, clientReqId });
+
+  const ok = postToNative({ target, text, req_id: reqId });
+  if (ok) return;
+
+  pending.delete(reqId);
+  browser.tabs.sendMessage(tabId, {
+    type: "native_result",
+    kind,
+    req_id: reqId,
+    client_req_id: clientReqId,
+    payload: { status: "error", target, req_id: reqId, error: "native host not available" }
+  }).catch(() => {});
+}
+
 browser.runtime.onMessage.addListener((message, sender) => {
   if (!message || !sender || !sender.tab) return;
 
@@ -79,60 +96,28 @@ browser.runtime.onMessage.addListener((message, sender) => {
   if (message.type === "check_actress") {
     const text = message.text || "";
     const clientReqId = Number(message.client_req_id || 0);
-    const reqId = nextReqId++;
-    pending.set(reqId, { tabId, kind: "check_actress", clientReqId });
+    forwardNativeRequest(tabId, "check_actress", "check_actress", text, clientReqId);
+    return;
+  }
 
-    const ok = postToNative({ target: "check_actress", text, req_id: reqId });
-    if (!ok) {
-      pending.delete(reqId);
-      browser.tabs.sendMessage(tabId, {
-        type: "native_result",
-        kind: "check_actress",
-        req_id: reqId,
-        client_req_id: clientReqId,
-        payload: { status: "error", target: "check_actress", req_id: reqId, error: "native host not available" }
-      }).catch(() => {});
-    }
+  if (message.type === "check_locate_preview") {
+    const text = message.text || "";
+    const clientReqId = Number(message.client_req_id || 0);
+    forwardNativeRequest(tabId, "check_locate_preview", "check_locate_preview", text, clientReqId);
     return;
   }
 
   if (message.type === "check_locate_exists") {
     const text = message.text || "";
     const clientReqId = Number(message.client_req_id || 0);
-    const reqId = nextReqId++;
-    pending.set(reqId, { tabId, kind: "check_locate_exists", clientReqId });
-
-    const ok = postToNative({ target: "check_locate_exists", text, req_id: reqId });
-    if (!ok) {
-      pending.delete(reqId);
-      browser.tabs.sendMessage(tabId, {
-        type: "native_result",
-        kind: "check_locate_exists",
-        req_id: reqId,
-        client_req_id: clientReqId,
-        payload: { status: "error", target: "check_locate_exists", req_id: reqId, error: "native host not available" }
-      }).catch(() => {});
-    }
+    forwardNativeRequest(tabId, "check_locate_exists", "check_locate_exists", text, clientReqId);
     return;
   }
 
   if (message.type === "register_actress") {
     const text = message.text || "";
     const clientReqId = Number(message.client_req_id || 0);
-    const reqId = nextReqId++;
-    pending.set(reqId, { tabId, kind: "register_actress", clientReqId });
-
-    const ok = postToNative({ target: "register_actress", text, req_id: reqId });
-    if (!ok) {
-      pending.delete(reqId);
-      browser.tabs.sendMessage(tabId, {
-        type: "native_result",
-        kind: "register_actress",
-        req_id: reqId,
-        client_req_id: clientReqId,
-        payload: { status: "error", target: "register_actress", req_id: reqId, error: "native host not available" }
-      }).catch(() => {});
-    }
+    forwardNativeRequest(tabId, "register_actress", "register_actress", text, clientReqId);
     return;
   }
 });
