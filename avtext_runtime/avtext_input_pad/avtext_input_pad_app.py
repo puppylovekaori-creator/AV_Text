@@ -296,6 +296,12 @@ def build_clipboard_history_lines(text: str) -> list[str]:
     return lines
 
 
+def build_clibor_history_send_lines(text: str) -> list[str]:
+    lines = build_clipboard_history_lines(text)
+    lines.reverse()
+    return lines
+
+
 def resolve_clibor_config_path() -> Path | None:
     if os.name != "nt":
         return None
@@ -1157,7 +1163,7 @@ class AvTextInputPadApp:
                         self.copy_text_to_clipboard(result_text)
                         auto_copied = True
                 elif mode == CLIBOR_HISTORY_COPY_MODE:
-                    history_lines = build_clipboard_history_lines(self.get_result_text())
+                    history_lines = build_clibor_history_send_lines(self.get_result_text())
                     history_copy_started = self.start_clipboard_history_copy(
                         MODE_SPECS[mode]["label"],
                         elapsed_ms,
@@ -1470,7 +1476,7 @@ class SmokeTestRunner:
             return
         if not self.check_notice_text("no_title"):
             return
-        history_lines = build_clipboard_history_lines(self.app.get_result_text())
+        history_lines = build_clibor_history_send_lines(self.app.get_result_text())
         if not history_lines:
             self.fail("no_title history lines empty")
             return
