@@ -4,6 +4,8 @@ const menuItems = [
   { id: "avtext-title", title: "タイトルに送る", target: "title" },
   { id: "avtext-actress", title: "女優名に送る", target: "actress" },
   { id: "avtext-actress-with-alias", title: "女優名に送る（別名付き）", target: "actress_with_alias" },
+  { id: "avtext-actress-append", title: "女優に追加", target: "actress_append" },
+  { id: "avtext-actress-append-with-alias", title: "女優に別名で追加", target: "actress_append_with_alias" },
   { id: "avtext-no", title: "品番に送る", target: "no" },
   { id: "avtext-focus-sakura", title: "サクラエディタを前面に", target: "focus_sakura", contexts: ["all"] }
 ];

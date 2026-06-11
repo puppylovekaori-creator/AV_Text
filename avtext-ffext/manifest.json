@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "AV Text Paster",
-  "version": "1.8",
+  "version": "1.9",
   "description": "Send selected text to Sakura title.txt / actress.txt / no.txt",
   "permissions": [
     "contextMenus",

@@ -6,6 +6,8 @@ target:
   - "title"           : title.txt を単一行に正規化して上書き
   - "actress"         : actress.txt を全置換
   - "actress_with_alias": actress.txt を「選択文字列()」で全置換
+  - "actress_append"  : actress.txt の末尾へ「 選択文字列」を追記
+  - "actress_append_with_alias": actress.txt の末尾へ「 選択文字列()」を追記
   - "no"              : no.txt を全置換
   - "focus_sakura"    : AV Text 専用入力エディタを最前面＆フォーカス（互換target名）
   - "check_actress"   : dbo.ACTRESS_DATA の OLD_NAME / NEW_NAME 完全一致で登録済判定
@@ -117,6 +119,32 @@ def write_text_full(path: Path, text: str) -> None:
     with path.open("w", encoding="utf-8", newline="\n") as f:
         f.write(text if text is not None else "")
         f.write("\n")
+
+
+def append_single_line_text(path: Path, text: str) -> str:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    normalized_new = _normalize_single_line_text(text)
+
+    existing = ""
+    if path.exists():
+        try:
+            existing = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            existing = path.read_text(encoding="utf-8-sig")
+
+    normalized_existing = _normalize_single_line_text(existing)
+
+    if normalized_existing and normalized_new:
+        combined = f"{normalized_existing} {normalized_new}"
+    elif normalized_existing:
+        combined = normalized_existing
+    else:
+        combined = normalized_new
+
+    with path.open("w", encoding="utf-8", newline="\n") as f:
+        f.write(combined)
+        f.write("\n")
+    return combined
 
 
 def _normalize_single_line_text(text: str) -> str:
@@ -847,6 +875,26 @@ def handle_message(msg: dict) -> dict:
             "target": target,
             "req_id": req_id,
             "text": actress_text,
+        }
+
+    if target == "actress_append":
+        appended_text = append_single_line_text(ACTRESS_PATH, text)
+        return {
+            "status": "ok",
+            "target": target,
+            "req_id": req_id,
+            "text": appended_text,
+        }
+
+    if target == "actress_append_with_alias":
+        normalized_text = _normalize_single_line_text(text)
+        actress_text = f"{normalized_text}()" if normalized_text else ""
+        appended_text = append_single_line_text(ACTRESS_PATH, actress_text)
+        return {
+            "status": "ok",
+            "target": target,
+            "req_id": req_id,
+            "text": appended_text,
         }
 
     if target == "no":
